@@ -23,6 +23,10 @@
 #include <StringArray.h>
 #include <SPIFFS.h>
 #include <FS.h>
+#include <RCSwitch.h>
+
+RCSwitch mySwitch = RCSwitch();
+#define CODE_BT1  7506049 
 
 // Replace with your network credentials
 const char* ssid = "TBD";
@@ -184,7 +188,8 @@ void setup() {
   server.begin();
   //pinMode(4, OUTPUT);
   pinMode(12, INPUT_PULLUP);
-
+  mySwitch.enableTransmit(13);
+  mySwitch.setProtocol(1, 208);
 }
 
 void loop() {
@@ -193,7 +198,19 @@ void loop() {
   
   if(butSonerie){takeNewPhoto = true;butSonerie = false;}
   if (takeNewPhoto) {
+    mySwitch.send(CODE_BT1 , 24);
+    delay(50);
+    mySwitch.send(CODE_BT1 , 24);
     capturePhotoSaveSpiffs();
+    mySwitch.send(CODE_BT1 , 24);
+    delay(50);
+    mySwitch.send(CODE_BT1 , 24);
+    delay(50);
+    mySwitch.send(CODE_BT1 , 24);
+    delay(50);
+    mySwitch.send(CODE_BT1 , 24);
+    delay(50);
+    mySwitch.send(CODE_BT1 , 24);
     takeNewPhoto = false;
     //butSonerie = false;
     Serial.print("buton");
