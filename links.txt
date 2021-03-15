@@ -13,3 +13,4 @@ https://github.com/jameszah/ESP32-CAM-Video-Recorder
 https://www.youtube.com/watch?v=5IhhyJjjCxo&t=558s
 https://www.youtube.com/watch?v=Fj21iHHUvf4
 https://github.com/ronschaeffer/video_doorbell_voice_response
+https://www.robofun.ro/microfon-mems-inmp401-admp401.html?gclid=Cj0KCQjwi7yCBhDJARIsAMWFScN3FVtK_C34wmv7APD53h9gHOO9fabiptcgInQbT_KiODaGCpno2-UaAnXaEALw_wcB
