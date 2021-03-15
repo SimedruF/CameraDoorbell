@@ -12,3 +12,4 @@ https://randomnerdtutorials.com/esp32-cam-ai-thinker-pinout/
 https://github.com/jameszah/ESP32-CAM-Video-Recorder
 https://www.youtube.com/watch?v=5IhhyJjjCxo&t=558s
 https://www.youtube.com/watch?v=Fj21iHHUvf4
+https://github.com/ronschaeffer/video_doorbell_voice_response
