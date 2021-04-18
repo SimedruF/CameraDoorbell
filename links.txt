@@ -17,3 +17,4 @@ https://www.robofun.ro/microfon-mems-inmp401-admp401.html?gclid=Cj0KCQjwi7yCBhDJ
 
 https://circuits4you.com/wp-content/uploads/2018/12/esp32-wroom-32_datasheet_en.pdf
 https://www.youtube.com/watch?v=qmruNKeIN-o
+https://github.com/schreibfaul1/ESP32-audioI2S
