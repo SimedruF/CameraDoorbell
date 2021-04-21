@@ -19,3 +19,6 @@ https://circuits4you.com/wp-content/uploads/2018/12/esp32-wroom-32_datasheet_en.
 https://www.youtube.com/watch?v=qmruNKeIN-o
 https://github.com/schreibfaul1/ESP32-audioI2S
 https://www.youtube.com/watch?v=ejyt-kWmys8
+https://www.youtube.com/playlist?list=PL5vDt5AALlRfGVUv2x7riDMIOX34udtKD
+
+https://www.espressif.com/sites/default/files/documentation/esp32_technical_reference_manual_en.pdf
