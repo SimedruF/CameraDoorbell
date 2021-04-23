@@ -22,3 +22,4 @@ https://www.youtube.com/watch?v=ejyt-kWmys8
 https://www.youtube.com/playlist?list=PL5vDt5AALlRfGVUv2x7riDMIOX34udtKD
 
 https://www.espressif.com/sites/default/files/documentation/esp32_technical_reference_manual_en.pdf
+https://community.hiveeyes.org/t/audio-acquisition-with-espressif-esp32-wroom-and-wrover-modules/1183
