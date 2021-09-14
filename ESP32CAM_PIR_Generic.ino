@@ -68,8 +68,8 @@ RTC_DATA_ATTR int bootCount = 0;
 #define smtpServerPort        465
 #define emailSubject          "ESP32-CAM Photo Captured"
 #define emailRecipient        "emailRecipient@gmail.com"
-const char* ssid = "AC0571";
-const char* password = "120479wifi";
+const char* ssid = "WIFI";
+const char* password = "password";
 
 // The Email Sending data object contains config and data to send
 //SMTPSession smtpData;
