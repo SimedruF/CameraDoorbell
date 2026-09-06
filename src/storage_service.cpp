@@ -26,7 +26,9 @@ SemaphoreHandle_t asSemaphore(void* value) {
 }
 
 bool sendFile(httpd_req_t* request, File& file) {
-  uint8_t buffer[4096];
+  // Keep this comfortably below the HTTP task stack size. A 4096-byte local
+  // buffer exhausted the former 4096-byte server stack and stalled downloads.
+  uint8_t buffer[1024];
   while (file.available()) {
     const size_t count = file.read(buffer, sizeof(buffer));
     if (count == 0 ||
@@ -440,7 +442,9 @@ bool StorageService::streamFile(const char* path, void* opaqueRequest, bool down
     return false;
   }
 
-  httpd_resp_set_type(request, contentTypeFor(path));
+  // Downloads use a generic binary type so mobile browsers do not try to render
+  // JPEG/AVI content in the current tab. Content-Disposition supplies the name.
+  httpd_resp_set_type(request, download ? "application/octet-stream" : contentTypeFor(path));
   httpd_resp_set_hdr(request, "Cache-Control", "private, max-age=60");
   if (download) {
     const char* name = strrchr(path, '/');

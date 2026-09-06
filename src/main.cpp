@@ -5,6 +5,7 @@
 #include "board_pins.hpp"
 #include "camera_service.hpp"
 #include "config_service.hpp"
+#include "radar_service.hpp"
 #include "storage_service.hpp"
 #include "web_server.hpp"
 
@@ -55,12 +56,15 @@ bool connectNetwork() {
 }
 
 void configureApplicationPins() {
+  const RuntimeConfig settings = Settings.snapshot();
   // GPIO12 is a boot strapping pin and must stay LOW while the board resets.
   pinMode(BoardPins::kDoorbellButton, INPUT_PULLDOWN);
   pinMode(BoardPins::kRfTransmit, OUTPUT);
   digitalWrite(BoardPins::kRfTransmit, LOW);
-  pinMode(BoardPins::kFlashLed, OUTPUT);
-  digitalWrite(BoardPins::kFlashLed, LOW);
+  constexpr uint8_t kFlashPwmChannel = 7;
+  ledcSetup(kFlashPwmChannel, 5000, 8);
+  ledcAttachPin(BoardPins::kFlashLed, kFlashPwmChannel);
+  ledcWrite(kFlashPwmChannel, settings.flashEnabled ? settings.flashIntensity : 0);
 }
 
 }  // namespace
@@ -81,6 +85,7 @@ void setup() {
 
   Storage.begin();  // Web streaming remains available when the card is absent.
   configureApplicationPins();
+  Radar.begin();
   connectNetwork();
 
   if (!startWebServers()) {

@@ -29,6 +29,8 @@ inline constexpr int kSdCommand = 15;
 inline constexpr int kFlashLed = 4;
 inline constexpr int kDoorbellButton = 12;  // Active HIGH; keep LOW during boot.
 inline constexpr int kRfTransmit = 13;      // FS1000A DATA, direct connection.
+// HLK-LD2410C UART_TX -> GPIO3. This pin is also the USB-UART programming RX;
+// disconnect the radar TX (or power it down) while uploading firmware.
+inline constexpr int kRadarReceive = 3;
 
 }  // namespace BoardPins
-

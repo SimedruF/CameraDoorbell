@@ -7,6 +7,7 @@
 #include "app_config.hpp"
 #include "camera_service.hpp"
 #include "config_service.hpp"
+#include "radar_service.hpp"
 #include "storage_service.hpp"
 
 namespace {
@@ -68,8 +69,8 @@ const char kConfigHtml[] PROGMEM = R"HTML(
 body{font-family:system-ui,sans-serif;max-width:760px;margin:auto;padding:16px;background:#111;color:#eee}
 a,button{display:inline-block;margin:8px 8px 8px 0;padding:10px 14px;border:0;border-radius:6px;background:#0b72e7;color:white;text-decoration:none;cursor:pointer}
 nav a{background:#333}fieldset{border:1px solid #444;border-radius:8px;margin:16px 0;padding:16px}
-label{display:block;margin:12px 0 5px}input[type=text],input[type=password],input[type=number]{box-sizing:border-box;width:100%;padding:10px;border:1px solid #555;border-radius:5px;background:#222;color:#fff}
-.hint{color:#aaa;font-size:.9rem}.row{display:flex;gap:12px}.row>*{flex:1}#message{white-space:pre-wrap;padding:10px;border-radius:6px}
+label{display:block;margin:12px 0 5px}input[type=text],input[type=password],input[type=number],select{box-sizing:border-box;width:100%;padding:10px;border:1px solid #555;border-radius:5px;background:#222;color:#fff}
+.hint{color:#aaa;font-size:.9rem}.row,.grid{display:flex;gap:12px;flex-wrap:wrap}.row>*,.grid>*{flex:1;min-width:180px}.checks label{display:inline-block;margin-right:18px}#message{white-space:pre-wrap;padding:10px;border-radius:6px}details{margin-top:12px}summary{cursor:pointer;color:#7db8ff}
 </style></head><body><h1>Configurare</h1>
 <nav><a href="/">Cameră</a><a href="/files">microSD</a></nav>
 <form id="settings"><fieldset><legend>Rețea Wi-Fi</legend>
@@ -84,11 +85,35 @@ label{display:block;margin:12px 0 5px}input[type=text],input[type=password],inpu
 <div><label for="videoDir">Director filme</label><input id="videoDir" maxlength="31"></div></div>
 <label for="minFree">Spațiu liber minim (MB)</label><input id="minFree" type="number" min="0" max="16384">
 <div class="hint">Sub acest prag nu se mai salvează fotografii. Înregistrarea video va folosi directorul de filme într-o etapă ulterioară.</div>
+</fieldset><fieldset><legend>Cameră OV2640</legend>
+<div class="grid"><div><label for="camProfile">Profil</label><select id="camProfile"><option value="0">Manual / zi</option><option value="1">Streaming</option><option value="2">Fotografie</option><option value="3">Noapte</option></select></div>
+<div><label for="frameSize">Rezoluție stream și fotografii</label><select id="frameSize"><option value="1">QQVGA 160×120</option><option value="3">HQVGA 240×176</option><option value="5">QVGA 320×240</option><option value="6">CIF 400×296</option><option value="8">VGA 640×480</option><option value="9">SVGA 800×600</option><option value="10">XGA 1024×768</option><option value="11">HD 1280×720</option><option value="12">SXGA 1280×1024</option><option value="13">UXGA 1600×1200</option></select></div></div>
+<div class="grid"><div><label for="jpegQuality">Calitate JPEG (4 foarte bună, 63 foarte comprimată)</label><input id="jpegQuality" type="number" min="4" max="63"></div><div><label for="frameRate">Cadre/secundă</label><input id="frameRate" type="number" min="1" max="30"></div></div>
+<div class="grid"><div><label for="brightness">Luminozitate (-2…2)</label><input id="brightness" type="number" min="-2" max="2"></div><div><label for="contrast">Contrast (-2…2)</label><input id="contrast" type="number" min="-2" max="2"></div><div><label for="saturation">Saturație (-2…2)</label><input id="saturation" type="number" min="-2" max="2"></div></div>
+<label for="specialEffect">Efect</label><select id="specialEffect"><option value="0">Normal</option><option value="1">Negativ</option><option value="2">Alb-negru</option><option value="3">Tentă roșie</option><option value="4">Tentă verde</option><option value="5">Tentă albastră</option><option value="6">Sepia</option></select>
+<details open><summary>White balance, expunere și gain</summary>
+<div class="checks"><label><input id="whiteBalance" type="checkbox"> White balance automat</label><label><input id="awbGain" type="checkbox"> AWB gain</label></div>
+<label for="wbMode">Mod white balance</label><select id="wbMode"><option value="0">Auto</option><option value="1">Soare</option><option value="2">Înnorat</option><option value="3">Birou</option><option value="4">Acasă</option></select>
+<div class="checks"><label><input id="autoExposure" type="checkbox"> Expunere automată AEC</label><label><input id="aec2" type="checkbox"> AEC DSP</label></div>
+<div class="grid"><div><label for="exposureLevel">Compensare expunere (-2…2)</label><input id="exposureLevel" type="number" min="-2" max="2"></div><div><label for="exposureValue">Expunere manuală (0…1200)</label><input id="exposureValue" type="number" min="0" max="1200"></div></div>
+<label><input id="autoGain" type="checkbox"> Gain automat AGC</label>
+<div class="grid"><div><label for="gainValue">Gain manual (0…30)</label><input id="gainValue" type="number" min="0" max="30"></div><div><label for="gainCeiling">Limită gain automat</label><select id="gainCeiling"><option value="0">2×</option><option value="1">4×</option><option value="2">8×</option><option value="3">16×</option><option value="4">32×</option><option value="5">64×</option><option value="6">128×</option></select></div></div></details>
+<details><summary>Procesare, orientare și test</summary><div class="checks"><label><input id="bpc" type="checkbox"> Corecție pixeli negri</label><label><input id="wpc" type="checkbox"> Corecție pixeli albi</label><label><input id="rawGamma" type="checkbox"> Raw gamma</label><label><input id="lensCorrection" type="checkbox"> Corecție lentilă</label><label><input id="downsize" type="checkbox"> Downsize DCW</label><label><input id="horizontalMirror" type="checkbox"> Oglindire</label><label><input id="verticalFlip" type="checkbox"> Rotire verticală</label><label><input id="colorBar" type="checkbox"> Bare de test</label></div></details>
+<details><summary>LED flash</summary><label><input id="flashEnabled" type="checkbox"> LED aprins continuu</label><label for="flashIntensity">Intensitate (0…255)</label><input id="flashIntensity" type="number" min="0" max="255"><div class="hint">GPIO4 este liber deoarece microSD funcționează în modul 1-bit. LED-ul poate încălzi placa dacă rămâne aprins puternic.</div></details>
+</fieldset><fieldset><legend>Radar HLK-LD2410C</legend>
+<label><input id="radarEnabled" type="checkbox"> Activează radarul pe GPIO3 (UART RX, 256000 baud)</label>
+<div class="grid"><div><label for="radarTriggerMode">Declanșare eveniment</label><select id="radarTriggerMode"><option value="0">Orice prezență</option><option value="1">Doar țintă în mișcare</option><option value="2">Doar țintă staționară</option></select></div><div><label for="radarCooldown">Pauză între evenimente (secunde)</label><input id="radarCooldown" type="number" min="1" max="3600"></div></div>
+<label><input id="radarAutoPhoto" type="checkbox"> Salvează automat o fotografie la începutul prezenței</label>
+<div class="hint">Conectare: LD2410C UART_TX → GPIO3, VCC → 5 V, GND comun. Deconectează UART_TX de la GPIO3 în timpul programării; pinul este folosit și de adaptorul USB-UART.</div>
 </fieldset><button type="submit">Salvează și repornește</button></form><div id="message"></div>
 <script>
 const $=id=>document.getElementById(id);
-async function load(){try{const c=await (await fetch('/api/config')).json();$('ssid').value=c.wifi_ssid;$('wifiPass').placeholder=c.wifi_password_set?'Parolă salvată; lasă gol pentru a o păstra':'Introduce parola';$('apPass').placeholder=c.ap_password_set?'Parolă salvată; lasă gol pentru a o păstra':'Minimum 8 caractere';$('sdEnabled').checked=c.storage_enabled;$('photoDir').value=c.photo_directory;$('videoDir').value=c.video_directory;$('minFree').value=c.minimum_free_mb}catch(e){$('message').textContent='Eroare: '+e}}
-$('settings').addEventListener('submit',async e=>{e.preventDefault();const p=new URLSearchParams();p.set('wifi_ssid',$('ssid').value);p.set('wifi_password',$('wifiPass').value);p.set('clear_wifi',$('clearWifi').checked?'1':'0');p.set('ap_password',$('apPass').value);p.set('storage_enabled',$('sdEnabled').checked?'1':'0');p.set('photo_directory',$('photoDir').value);p.set('video_directory',$('videoDir').value);p.set('minimum_free_mb',$('minFree').value);$('message').textContent='Se salvează...';try{const r=await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:p});const j=await r.json();if(!r.ok)throw new Error(j.error||r.statusText);$('message').textContent='Setările au fost salvate. Placa repornește; reconectează-te la noua rețea.'}catch(e){$('message').textContent='Eroare: '+e.message}});
+const boolIds=['sdEnabled','whiteBalance','awbGain','autoExposure','aec2','autoGain','bpc','wpc','rawGamma','lensCorrection','downsize','horizontalMirror','verticalFlip','colorBar','flashEnabled','radarEnabled','radarAutoPhoto'];
+const cameraIds=['camProfile','frameSize','jpegQuality','frameRate','brightness','contrast','saturation','specialEffect','wbMode','exposureLevel','exposureValue','gainValue','gainCeiling','flashIntensity','radarTriggerMode','radarCooldown'];
+const apiNames={camProfile:'camera_profile',frameSize:'frame_size',jpegQuality:'jpeg_quality',frameRate:'frame_rate',specialEffect:'special_effect',whiteBalance:'white_balance',awbGain:'awb_gain',wbMode:'wb_mode',autoExposure:'auto_exposure',exposureLevel:'exposure_level',exposureValue:'exposure_value',autoGain:'auto_gain',gainValue:'gain_value',gainCeiling:'gain_ceiling',rawGamma:'raw_gamma',lensCorrection:'lens_correction',horizontalMirror:'horizontal_mirror',verticalFlip:'vertical_flip',flashEnabled:'flash_enabled',flashIntensity:'flash_intensity',radarEnabled:'radar_enabled',radarAutoPhoto:'radar_auto_photo',radarTriggerMode:'radar_trigger_mode',radarCooldown:'radar_cooldown_seconds'};
+async function load(){try{const c=await (await fetch('/api/config')).json();$('ssid').value=c.wifi_ssid;$('wifiPass').placeholder=c.wifi_password_set?'Parolă salvată; lasă gol pentru a o păstra':'Introduce parola';$('apPass').placeholder=c.ap_password_set?'Parolă salvată; lasă gol pentru a o păstra':'Minimum 8 caractere';$('photoDir').value=c.photo_directory;$('videoDir').value=c.video_directory;$('minFree').value=c.minimum_free_mb;for(const id of boolIds)$(id).checked=c[apiNames[id]||id.replace(/[A-Z]/g,m=>'_'+m.toLowerCase())];for(const id of cameraIds)$(id).value=c[apiNames[id]||id]}catch(e){$('message').textContent='Eroare: '+e}}
+$('camProfile').onchange=()=>{const p=+$('camProfile').value;if(p===1){$('frameSize').value=8;$('jpegQuality').value=12;$('frameRate').value=10;$('brightness').value=0;$('contrast').value=0;$('saturation').value=0}else if(p===2){$('frameSize').value=13;$('jpegQuality').value=8;$('frameRate').value=2;$('brightness').value=0;$('contrast').value=0;$('saturation').value=0}else if(p===3){$('frameSize').value=8;$('jpegQuality').value=14;$('frameRate').value=5;$('brightness').value=1;$('contrast').value=1;$('saturation').value=-1;$('autoExposure').checked=true;$('aec2').checked=true;$('exposureLevel').value=1;$('autoGain').checked=true;$('gainCeiling').value=6}};
+$('settings').addEventListener('submit',async e=>{e.preventDefault();const p=new URLSearchParams();p.set('wifi_ssid',$('ssid').value);p.set('wifi_password',$('wifiPass').value);p.set('clear_wifi',$('clearWifi').checked?'1':'0');p.set('ap_password',$('apPass').value);p.set('photo_directory',$('photoDir').value);p.set('video_directory',$('videoDir').value);p.set('minimum_free_mb',$('minFree').value);for(const id of boolIds)p.set(apiNames[id]||id.replace(/[A-Z]/g,m=>'_'+m.toLowerCase()),$(id).checked?'1':'0');for(const id of cameraIds)p.set(apiNames[id]||id,$(id).value);$('message').textContent='Se salvează...';try{const r=await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:p});const j=await r.json();if(!r.ok)throw new Error(j.error||r.statusText);$('message').textContent='Setările au fost salvate. Placa repornește; reconectează-te la noua rețea.'}catch(e){$('message').textContent='Eroare: '+e.message}});
 load();
 </script></body></html>
 )HTML";
@@ -107,7 +132,7 @@ const enc=p=>encodeURIComponent(p);const basename=p=>p==='/'?'/':p.substring(p.l
 const saved=e=>e.saved_at?(new Date(e.saved_at).toLocaleString('ro-RO')+(e.date_source==='filename'?' (din nume)':'')):(e.directory?'—':'Dată indisponibilă');
 function mediaType(p){p=p.toLowerCase();if(/\.(jpg|jpeg)$/.test(p))return'image';if(/\.(avi|mjpeg|mjpg)$/.test(p))return'video';return'file'}
 function openFile(p){const type=mediaType(p),url='/media?path='+enc(p),box=$('preview');box.replaceChildren();if(type==='file'){window.open(url,'_blank');return}const title=document.createElement('h2');title.textContent=basename(p);box.appendChild(title);const media=document.createElement(type==='image'?'img':'video');media.src=url;if(type==='video')media.controls=true;box.appendChild(media);if(type==='video'){const note=document.createElement('p');note.className='muted';note.textContent='Redarea AVI/MJPEG depinde de browser; folosește Descărcare dacă nu pornește.';box.appendChild(note)}}
-async function load(path){$('info').className='muted';$('info').textContent='Se încarcă...';$('preview').replaceChildren();try{const r=await fetch('/api/files?path='+enc(path));if(!r.ok)throw new Error(await r.text());const data=await r.json();current=data.path;$('path').textContent=current;$('up').disabled=current==='/';const body=$('items');body.replaceChildren();data.entries.sort((a,b)=>Number(b.directory)-Number(a.directory)||(b.saved_at||'').localeCompare(a.saved_at||'')||a.path.localeCompare(b.path)).forEach(e=>{const tr=document.createElement('tr'),name=basename(e.path),type=e.directory?'director':mediaType(e.path),nameCell=document.createElement('td'),open=document.createElement('button');open.className='name';open.textContent=name;open.onclick=()=>e.directory?load(e.path):openFile(e.path);nameCell.appendChild(open);const typeCell=document.createElement('td');typeCell.className='type';typeCell.textContent=type;const date=document.createElement('td');date.textContent=saved(e);const size=document.createElement('td');size.className='size';size.textContent=e.directory?'—':human(e.size);const actions=document.createElement('td');if(!e.directory){const download=document.createElement('a');download.href='/download?path='+enc(e.path);download.textContent='Descarcă';actions.appendChild(download)}tr.append(nameCell,typeCell,date,size,actions);body.appendChild(tr)});$('info').textContent=data.entries.length+' elemente'+(data.truncated?' (lista limitată)':'')}catch(e){$('info').className='error';$('info').textContent=e.message}}
+async function load(path){$('info').className='muted';$('info').textContent='Se încarcă...';$('preview').replaceChildren();try{const r=await fetch('/api/files?path='+enc(path));if(!r.ok)throw new Error(await r.text());const data=await r.json();current=data.path;$('path').textContent=current;$('up').disabled=current==='/';const body=$('items');body.replaceChildren();data.entries.sort((a,b)=>Number(b.directory)-Number(a.directory)||(b.saved_at||'').localeCompare(a.saved_at||'')||a.path.localeCompare(b.path)).forEach(e=>{const tr=document.createElement('tr'),name=basename(e.path),type=e.directory?'director':mediaType(e.path),nameCell=document.createElement('td'),open=document.createElement('button');open.className='name';open.textContent=name;open.onclick=()=>e.directory?load(e.path):openFile(e.path);nameCell.appendChild(open);const typeCell=document.createElement('td');typeCell.className='type';typeCell.textContent=type;const date=document.createElement('td');date.textContent=saved(e);const size=document.createElement('td');size.className='size';size.textContent=e.directory?'—':human(e.size);const actions=document.createElement('td');if(!e.directory){const download=document.createElement('a');download.href='/download?path='+enc(e.path);download.download=name;download.textContent='Descarcă';actions.appendChild(download)}tr.append(nameCell,typeCell,date,size,actions);body.appendChild(tr)});$('info').textContent=data.entries.length+' elemente'+(data.truncated?' (lista limitată)':'')}catch(e){$('info').className='error';$('info').textContent=e.message}}
 $('up').onclick=()=>load(current==='/'?'/':(current.substring(0,current.lastIndexOf('/'))||'/'));load('/');
 </script></body></html>
 )HTML";
@@ -180,6 +205,25 @@ bool formValue(const char* body, const char* key, char* output, size_t outputSiz
   return urlDecode(output);
 }
 
+template <typename T>
+bool formInteger(const char* body, const char* key, long minimum, long maximum, T& output) {
+  char value[24];
+  if (!formValue(body, key, value, sizeof(value)) || value[0] == '\0') return false;
+  char* end = nullptr;
+  const long parsed = strtol(value, &end, 10);
+  if (end == nullptr || *end != '\0' || parsed < minimum || parsed > maximum) return false;
+  output = static_cast<T>(parsed);
+  return true;
+}
+
+bool formBoolean(const char* body, const char* key, bool& output) {
+  char value[8];
+  if (!formValue(body, key, value, sizeof(value))) return false;
+  if (strcmp(value, "1") != 0 && strcmp(value, "0") != 0) return false;
+  output = strcmp(value, "1") == 0;
+  return true;
+}
+
 bool requestPath(httpd_req_t* request, char* path, size_t pathSize) {
   const size_t queryLength = httpd_req_get_url_query_len(request);
   if (queryLength == 0 || queryLength >= 255) return false;
@@ -215,6 +259,39 @@ esp_err_t configGetHandler(httpd_req_t* request) {
   json += jsonQuoted(config.videoDirectory);
   json += ",\"minimum_free_mb\":";
   json += config.minimumFreeMb;
+  json += ",\"camera_profile\":"; json += static_cast<unsigned>(config.cameraProfile);
+  json += ",\"frame_size\":"; json += static_cast<unsigned>(config.frameSize);
+  json += ",\"jpeg_quality\":"; json += static_cast<unsigned>(config.jpegQuality);
+  json += ",\"frame_rate\":"; json += static_cast<unsigned>(config.frameRate);
+  json += ",\"brightness\":"; json += static_cast<int>(config.brightness);
+  json += ",\"contrast\":"; json += static_cast<int>(config.contrast);
+  json += ",\"saturation\":"; json += static_cast<int>(config.saturation);
+  json += ",\"special_effect\":"; json += static_cast<unsigned>(config.specialEffect);
+  json += ",\"white_balance\":"; json += config.whiteBalance ? "true" : "false";
+  json += ",\"awb_gain\":"; json += config.awbGain ? "true" : "false";
+  json += ",\"wb_mode\":"; json += static_cast<unsigned>(config.whiteBalanceMode);
+  json += ",\"auto_exposure\":"; json += config.autoExposure ? "true" : "false";
+  json += ",\"aec2\":"; json += config.aec2 ? "true" : "false";
+  json += ",\"exposure_level\":"; json += static_cast<int>(config.exposureLevel);
+  json += ",\"exposure_value\":"; json += static_cast<unsigned>(config.exposureValue);
+  json += ",\"auto_gain\":"; json += config.autoGain ? "true" : "false";
+  json += ",\"gain_value\":"; json += static_cast<unsigned>(config.gainValue);
+  json += ",\"gain_ceiling\":"; json += static_cast<unsigned>(config.gainCeiling);
+  json += ",\"bpc\":"; json += config.blackPixelCorrection ? "true" : "false";
+  json += ",\"wpc\":"; json += config.whitePixelCorrection ? "true" : "false";
+  json += ",\"raw_gamma\":"; json += config.rawGamma ? "true" : "false";
+  json += ",\"lens_correction\":"; json += config.lensCorrection ? "true" : "false";
+  json += ",\"downsize\":"; json += config.downsize ? "true" : "false";
+  json += ",\"horizontal_mirror\":"; json += config.horizontalMirror ? "true" : "false";
+  json += ",\"vertical_flip\":"; json += config.verticalFlip ? "true" : "false";
+  json += ",\"color_bar\":"; json += config.colorBar ? "true" : "false";
+  json += ",\"flash_enabled\":"; json += config.flashEnabled ? "true" : "false";
+  json += ",\"flash_intensity\":"; json += static_cast<unsigned>(config.flashIntensity);
+  json += ",\"radar_enabled\":"; json += config.radarEnabled ? "true" : "false";
+  json += ",\"radar_auto_photo\":"; json += config.radarAutoPhoto ? "true" : "false";
+  json += ",\"radar_trigger_mode\":"; json += static_cast<unsigned>(config.radarTriggerMode);
+  json += ",\"radar_cooldown_seconds\":";
+  json += static_cast<unsigned>(config.radarCooldownSeconds);
   json += '}';
 
   httpd_resp_set_type(request, "application/json");
@@ -228,13 +305,13 @@ void restartTask(void*) {
 }
 
 esp_err_t configPostHandler(httpd_req_t* request) {
-  if (request->content_len == 0 || request->content_len >= 1024) {
+  if (request->content_len == 0 || request->content_len >= 2048) {
     httpd_resp_set_status(request, "400 Bad Request");
     httpd_resp_set_type(request, "application/json");
     return httpd_resp_sendstr(request, "{\"error\":\"Cerere invalida sau prea mare.\"}");
   }
 
-  char body[1024];
+  char body[2048];
   size_t received = 0;
   while (received < request->content_len) {
     const int count = httpd_req_recv(request, body + received, request->content_len - received);
@@ -294,6 +371,46 @@ esp_err_t configPostHandler(httpd_req_t* request) {
   strlcpy(candidate.videoDirectory, value, sizeof(candidate.videoDirectory));
   if (!formValue(body, "minimum_free_mb", value, sizeof(value))) strlcpy(value, "128", sizeof(value));
   candidate.minimumFreeMb = static_cast<uint32_t>(strtoul(value, nullptr, 10));
+
+  const bool cameraValuesValid =
+      formInteger(body, "camera_profile", 0, 3, candidate.cameraProfile) &&
+      formInteger(body, "frame_size", 1, 13, candidate.frameSize) &&
+      formInteger(body, "jpeg_quality", 4, 63, candidate.jpegQuality) &&
+      formInteger(body, "frame_rate", 1, 30, candidate.frameRate) &&
+      formInteger(body, "brightness", -2, 2, candidate.brightness) &&
+      formInteger(body, "contrast", -2, 2, candidate.contrast) &&
+      formInteger(body, "saturation", -2, 2, candidate.saturation) &&
+      formInteger(body, "special_effect", 0, 6, candidate.specialEffect) &&
+      formBoolean(body, "white_balance", candidate.whiteBalance) &&
+      formBoolean(body, "awb_gain", candidate.awbGain) &&
+      formInteger(body, "wb_mode", 0, 4, candidate.whiteBalanceMode) &&
+      formBoolean(body, "auto_exposure", candidate.autoExposure) &&
+      formBoolean(body, "aec2", candidate.aec2) &&
+      formInteger(body, "exposure_level", -2, 2, candidate.exposureLevel) &&
+      formInteger(body, "exposure_value", 0, 1200, candidate.exposureValue) &&
+      formBoolean(body, "auto_gain", candidate.autoGain) &&
+      formInteger(body, "gain_value", 0, 30, candidate.gainValue) &&
+      formInteger(body, "gain_ceiling", 0, 6, candidate.gainCeiling) &&
+      formBoolean(body, "bpc", candidate.blackPixelCorrection) &&
+      formBoolean(body, "wpc", candidate.whitePixelCorrection) &&
+      formBoolean(body, "raw_gamma", candidate.rawGamma) &&
+      formBoolean(body, "lens_correction", candidate.lensCorrection) &&
+      formBoolean(body, "downsize", candidate.downsize) &&
+      formBoolean(body, "horizontal_mirror", candidate.horizontalMirror) &&
+      formBoolean(body, "vertical_flip", candidate.verticalFlip) &&
+      formBoolean(body, "color_bar", candidate.colorBar) &&
+      formBoolean(body, "flash_enabled", candidate.flashEnabled) &&
+      formInteger(body, "flash_intensity", 0, 255, candidate.flashIntensity) &&
+      formBoolean(body, "radar_enabled", candidate.radarEnabled) &&
+      formBoolean(body, "radar_auto_photo", candidate.radarAutoPhoto) &&
+      formInteger(body, "radar_trigger_mode", 0, 2, candidate.radarTriggerMode) &&
+      formInteger(body, "radar_cooldown_seconds", 1, 3600,
+                  candidate.radarCooldownSeconds);
+  if (!cameraValuesValid) {
+    httpd_resp_set_status(request, "400 Bad Request");
+    httpd_resp_set_type(request, "application/json");
+    return httpd_resp_sendstr(request, "{\"error\":\"Configuratia camerei este incompleta sau invalida.\"}");
+  }
 
   String error;
   if (!Settings.save(candidate, error)) {
@@ -365,14 +482,21 @@ esp_err_t latestPhotoHandler(httpd_req_t* request) {
 
 esp_err_t statusHandler(httpd_req_t* request) {
   const StorageStatus storage = Storage.status();
+  const RadarStatus radar = Radar.status();
   const RuntimeConfig settings = Settings.snapshot();
   const IPAddress ip = WiFi.getMode() == WIFI_MODE_AP ? WiFi.softAPIP() : WiFi.localIP();
   const uint32_t age = Camera.latestFrameAgeMs();
-  char json[640];
+  char json[1024];
   snprintf(json, sizeof(json),
            "{\"camera\":{\"ready\":%s,\"sequence\":%lu,\"frame_age_ms\":%lu},"
            "\"storage\":{\"mounted\":%s,\"total_bytes\":%llu,\"used_bytes\":%llu,"
            "\"latest_photo\":\"%s\",\"enabled\":%s,\"minimum_free_mb\":%lu},"
+           "\"radar\":{\"enabled\":%s,\"connected\":%s,\"presence\":%s,"
+           "\"moving\":%s,\"stationary\":%s,\"moving_distance_cm\":%u,"
+           "\"moving_energy\":%u,\"stationary_distance_cm\":%u,"
+           "\"stationary_energy\":%u,\"detection_distance_cm\":%u,"
+           "\"last_frame_age_ms\":%lu,\"event_sequence\":%lu,"
+           "\"photos_triggered\":%lu},"
            "\"network\":{\"mode\":\"%s\",\"ip\":\"%s\"},"
            "\"memory\":{\"free_heap\":%u,\"free_psram\":%u}}",
            Camera.ready() ? "true" : "false", static_cast<unsigned long>(Camera.latestSequence()),
@@ -381,6 +505,17 @@ esp_err_t statusHandler(httpd_req_t* request) {
            static_cast<unsigned long long>(storage.usedBytes), storage.latestPhoto,
            settings.storageEnabled ? "true" : "false",
            static_cast<unsigned long>(settings.minimumFreeMb),
+           radar.enabled ? "true" : "false", radar.connected ? "true" : "false",
+           radar.presence ? "true" : "false", radar.moving ? "true" : "false",
+           radar.stationary ? "true" : "false",
+           static_cast<unsigned>(radar.movingDistanceCm),
+           static_cast<unsigned>(radar.movingEnergy),
+           static_cast<unsigned>(radar.stationaryDistanceCm),
+           static_cast<unsigned>(radar.stationaryEnergy),
+           static_cast<unsigned>(radar.detectionDistanceCm),
+           static_cast<unsigned long>(radar.lastFrameAgeMs),
+           static_cast<unsigned long>(radar.eventSequence),
+           static_cast<unsigned long>(radar.photosTriggered),
            WiFi.getMode() == WIFI_MODE_AP ? "ap" : "station", ip.toString().c_str(),
            ESP.getFreeHeap(), ESP.getFreePsram());
   httpd_resp_set_type(request, "application/json");
@@ -442,6 +577,7 @@ bool registerUri(httpd_handle_t server, const char* uri, httpd_method_t method,
 bool startWebServers() {
   httpd_config_t webConfig = HTTPD_DEFAULT_CONFIG();
   webConfig.server_port = AppConfig::kWebPort;
+  webConfig.stack_size = 8192;
   webConfig.max_uri_handlers = 16;
   webConfig.lru_purge_enable = true;
 

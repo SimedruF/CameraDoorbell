@@ -5,6 +5,7 @@
 
 #include "app_config.hpp"
 #include "board_pins.hpp"
+#include "config_service.hpp"
 
 CameraService Camera;
 
@@ -33,6 +34,7 @@ bool CameraService::begin() {
     return false;
   }
 
+  const RuntimeConfig settings = Settings.snapshot();
   camera_config_t config = {};
   config.ledc_channel = LEDC_CHANNEL_0;
   config.ledc_timer = LEDC_TIMER_0;
@@ -54,8 +56,8 @@ bool CameraService::begin() {
   config.pin_reset = BoardPins::kCameraReset;
   config.xclk_freq_hz = 20000000;
   config.pixel_format = PIXFORMAT_JPEG;
-  config.frame_size = AppConfig::kFrameSize;
-  config.jpeg_quality = AppConfig::kJpegQuality;
+  config.frame_size = static_cast<framesize_t>(settings.frameSize);
+  config.jpeg_quality = settings.jpegQuality;
   config.fb_count = 2;
   config.fb_location = CAMERA_FB_IN_PSRAM;
   config.grab_mode = CAMERA_GRAB_LATEST;
@@ -68,7 +70,30 @@ bool CameraService::begin() {
 
   sensor_t* sensor = esp_camera_sensor_get();
   if (sensor != nullptr) {
-    sensor->set_framesize(sensor, AppConfig::kFrameSize);
+    sensor->set_framesize(sensor, static_cast<framesize_t>(settings.frameSize));
+    sensor->set_quality(sensor, settings.jpegQuality);
+    sensor->set_brightness(sensor, settings.brightness);
+    sensor->set_contrast(sensor, settings.contrast);
+    sensor->set_saturation(sensor, settings.saturation);
+    sensor->set_special_effect(sensor, settings.specialEffect);
+    sensor->set_whitebal(sensor, settings.whiteBalance);
+    sensor->set_awb_gain(sensor, settings.awbGain);
+    sensor->set_wb_mode(sensor, settings.whiteBalanceMode);
+    sensor->set_exposure_ctrl(sensor, settings.autoExposure);
+    sensor->set_aec2(sensor, settings.aec2);
+    sensor->set_ae_level(sensor, settings.exposureLevel);
+    sensor->set_aec_value(sensor, settings.exposureValue);
+    sensor->set_gain_ctrl(sensor, settings.autoGain);
+    sensor->set_agc_gain(sensor, settings.gainValue);
+    sensor->set_gainceiling(sensor, static_cast<gainceiling_t>(settings.gainCeiling));
+    sensor->set_bpc(sensor, settings.blackPixelCorrection);
+    sensor->set_wpc(sensor, settings.whitePixelCorrection);
+    sensor->set_raw_gma(sensor, settings.rawGamma);
+    sensor->set_lenc(sensor, settings.lensCorrection);
+    sensor->set_dcw(sensor, settings.downsize);
+    sensor->set_hmirror(sensor, settings.horizontalMirror);
+    sensor->set_vflip(sensor, settings.verticalFlip);
+    sensor->set_colorbar(sensor, settings.colorBar);
   }
 
   const BaseType_t created =
@@ -79,7 +104,8 @@ bool CameraService::begin() {
     return false;
   }
 
-  Serial.println("[camera] OV2640 ready (JPEG, VGA, two PSRAM frame buffers)");
+  Serial.printf("[camera] OV2640 ready (JPEG, frame size=%u, quality=%u, %u FPS)\n",
+                settings.frameSize, settings.jpegQuality, settings.frameRate);
   return true;
 }
 
@@ -88,6 +114,8 @@ void CameraService::taskEntry(void* context) {
 }
 
 void CameraService::captureLoop() {
+  const RuntimeConfig settings = Settings.snapshot();
+  const TickType_t frameInterval = pdMS_TO_TICKS(1000U / settings.frameRate);
   TickType_t lastWake = xTaskGetTickCount();
   uint8_t warmupFrames = 3;
 
@@ -108,7 +136,7 @@ void CameraService::captureLoop() {
     }
 
     esp_camera_fb_return(frame);
-    vTaskDelayUntil(&lastWake, pdMS_TO_TICKS(AppConfig::kFrameIntervalMs));
+    vTaskDelayUntil(&lastWake, frameInterval);
   }
 }
 
