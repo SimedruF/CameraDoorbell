@@ -10,6 +10,10 @@ struct RuntimeConfig {
   char photoDirectory[32] = "/photos";
   char videoDirectory[32] = "/videos";
   uint32_t minimumFreeMb = 128;
+  bool videoEnabled = true;
+  uint8_t videoFrameRate = 5;
+  uint16_t videoDurationSeconds = 15;
+  uint16_t videoMaximumSizeMb = 256;
 
   uint8_t cameraProfile = 0;       // 0 manual/day, 1 stream, 2 photo, 3 night.
   uint8_t frameSize = 8;           // FRAMESIZE_VGA.
@@ -42,6 +46,7 @@ struct RuntimeConfig {
 
   bool radarEnabled = false;
   bool radarAutoPhoto = true;
+  bool radarAutoVideo = false;
   uint8_t radarTriggerMode = 0;  // 0 any presence, 1 moving, 2 stationary.
   uint16_t radarCooldownSeconds = 30;
 };

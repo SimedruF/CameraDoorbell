@@ -76,6 +76,10 @@ bool ConfigService::begin() {
                  sizeof(config_.videoDirectory));
   config_.storageEnabled = preferences.getBool("sd_enabled", true);
   config_.minimumFreeMb = preferences.getUInt("min_free_mb", 128);
+  config_.videoEnabled = preferences.getBool("video_enabled", true);
+  config_.videoFrameRate = preferences.getUChar("video_fps", 5);
+  config_.videoDurationSeconds = preferences.getUShort("video_seconds", 15);
+  config_.videoMaximumSizeMb = preferences.getUShort("video_max_mb", 256);
   config_.cameraProfile = preferences.getUChar("cam_profile", 0);
   config_.frameSize = preferences.getUChar("cam_size", 8);
   config_.jpegQuality = preferences.getUChar("jpg_quality", 12);
@@ -106,6 +110,7 @@ bool ConfigService::begin() {
   config_.flashIntensity = preferences.getUChar("flash_level", 128);
   config_.radarEnabled = preferences.getBool("radar_enabled", false);
   config_.radarAutoPhoto = preferences.getBool("radar_photo", true);
+  config_.radarAutoVideo = preferences.getBool("radar_video", false);
   config_.radarTriggerMode = preferences.getUChar("radar_trigger", 0);
   config_.radarCooldownSeconds = preferences.getUShort("radar_cool", 30);
   preferences.end();
@@ -136,6 +141,9 @@ bool ConfigService::begin() {
   config_.gainCeiling = constrain(config_.gainCeiling, 0, 6);
   config_.radarTriggerMode = constrain(config_.radarTriggerMode, 0, 2);
   config_.radarCooldownSeconds = constrain(config_.radarCooldownSeconds, 1, 3600);
+  config_.videoFrameRate = constrain(config_.videoFrameRate, 1, 20);
+  config_.videoDurationSeconds = constrain(config_.videoDurationSeconds, 1, 600);
+  config_.videoMaximumSizeMb = constrain(config_.videoMaximumSizeMb, 8, 1024);
 
   Serial.println("[config] Runtime settings loaded from NVS");
   return true;
@@ -175,6 +183,12 @@ bool ConfigService::save(const RuntimeConfig& candidate, String& error) {
     error = "Pragul de spatiu liber nu poate depasi 16384 MB.";
     return false;
   }
+  if (candidate.videoFrameRate < 1 || candidate.videoFrameRate > 20 ||
+      candidate.videoDurationSeconds < 1 || candidate.videoDurationSeconds > 600 ||
+      candidate.videoMaximumSizeMb < 8 || candidate.videoMaximumSizeMb > 1024) {
+    error = "Setarile recorderului AVI sunt in afara intervalului permis.";
+    return false;
+  }
   if (candidate.cameraProfile > 3 || !validFrameSize(candidate.frameSize) ||
       candidate.jpegQuality < 4 || candidate.jpegQuality > 63 || candidate.frameRate < 1 ||
       candidate.frameRate > 30 || candidate.brightness < -2 || candidate.brightness > 2 ||
@@ -205,6 +219,10 @@ bool ConfigService::save(const RuntimeConfig& candidate, String& error) {
   success &= preferences.putString("photo_dir", candidate.photoDirectory) > 0;
   success &= preferences.putString("video_dir", candidate.videoDirectory) > 0;
   success &= preferences.putUInt("min_free_mb", candidate.minimumFreeMb) > 0;
+  success &= preferences.putBool("video_enabled", candidate.videoEnabled) > 0;
+  success &= preferences.putUChar("video_fps", candidate.videoFrameRate) > 0;
+  success &= preferences.putUShort("video_seconds", candidate.videoDurationSeconds) > 0;
+  success &= preferences.putUShort("video_max_mb", candidate.videoMaximumSizeMb) > 0;
   success &= preferences.putUChar("cam_profile", candidate.cameraProfile) > 0;
   success &= preferences.putUChar("cam_size", candidate.frameSize) > 0;
   success &= preferences.putUChar("jpg_quality", candidate.jpegQuality) > 0;
@@ -235,6 +253,7 @@ bool ConfigService::save(const RuntimeConfig& candidate, String& error) {
   success &= preferences.putUChar("flash_level", candidate.flashIntensity) > 0;
   success &= preferences.putBool("radar_enabled", candidate.radarEnabled) > 0;
   success &= preferences.putBool("radar_photo", candidate.radarAutoPhoto) > 0;
+  success &= preferences.putBool("radar_video", candidate.radarAutoVideo) > 0;
   success &= preferences.putUChar("radar_trigger", candidate.radarTriggerMode) > 0;
   success &= preferences.putUShort("radar_cool", candidate.radarCooldownSeconds) > 0;
   preferences.end();

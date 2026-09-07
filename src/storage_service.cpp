@@ -3,10 +3,12 @@
 #include <FS.h>
 #include <SD_MMC.h>
 #include <esp_http_server.h>
+#include <esp_heap_caps.h>
 #include <esp_system.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/semphr.h>
+#include <new>
 #include <time.h>
 
 #include "app_config.hpp"
@@ -16,6 +18,131 @@
 StorageService Storage;
 
 namespace {
+
+constexpr size_t kAviHeaderSize = 224;
+constexpr uint32_t kAviKeyFrame = 0x10;
+
+struct AviIndexEntry {
+  uint32_t offset;
+  uint32_t size;
+};
+
+struct VideoState {
+  File file;
+  FrameCopy frame;
+  AviIndexEntry* index = nullptr;
+  size_t indexCapacity = 0;
+  uint32_t movieBytes = 0;
+  uint32_t jpegBytes = 0;
+  uint32_t largestFrame = 0;
+  uint32_t lastSequence = 0;
+  uint32_t nextFrameAtMs = 0;
+  uint32_t durationMs = 0;
+  uint32_t maximumFileBytes = 0;
+  uint16_t width = 0;
+  uint16_t height = 0;
+  uint8_t targetFps = 0;
+  bool writeFailed = false;
+  char finalPath[96] = {};
+  char temporaryPath[96] = {};
+};
+
+class BufferWriter {
+ public:
+  BufferWriter(uint8_t* data, size_t capacity) : data_(data), capacity_(capacity) {}
+
+  void fourcc(const char value[5]) {
+    bytes(reinterpret_cast<const uint8_t*>(value), 4);
+  }
+  void u16(uint16_t value) {
+    uint8_t encoded[2] = {static_cast<uint8_t>(value), static_cast<uint8_t>(value >> 8)};
+    bytes(encoded, sizeof(encoded));
+  }
+  void u32(uint32_t value) {
+    uint8_t encoded[4] = {static_cast<uint8_t>(value), static_cast<uint8_t>(value >> 8),
+                          static_cast<uint8_t>(value >> 16),
+                          static_cast<uint8_t>(value >> 24)};
+    bytes(encoded, sizeof(encoded));
+  }
+  void zeros(size_t count) {
+    while (count-- > 0 && position_ < capacity_) data_[position_++] = 0;
+  }
+  size_t position() const { return position_; }
+
+ private:
+  void bytes(const uint8_t* value, size_t count) {
+    if (position_ + count > capacity_) return;
+    memcpy(data_ + position_, value, count);
+    position_ += count;
+  }
+
+  uint8_t* data_;
+  size_t capacity_;
+  size_t position_ = 0;
+};
+
+bool frameDimensions(uint8_t frameSize, uint16_t& width, uint16_t& height) {
+  switch (frameSize) {
+    case 1: width = 160; height = 120; return true;
+    case 3: width = 240; height = 176; return true;
+    case 5: width = 320; height = 240; return true;
+    case 6: width = 400; height = 296; return true;
+    case 8: width = 640; height = 480; return true;
+    case 9: width = 800; height = 600; return true;
+    case 10: width = 1024; height = 768; return true;
+    case 11: width = 1280; height = 720; return true;
+    case 12: width = 1280; height = 1024; return true;
+    case 13: width = 1600; height = 1200; return true;
+    default: return false;
+  }
+}
+
+bool buildAviHeader(uint8_t* output, uint16_t width, uint16_t height, uint8_t fps) {
+  memset(output, 0, kAviHeaderSize);
+  BufferWriter writer(output, kAviHeaderSize);
+  writer.fourcc("RIFF"); writer.u32(0); writer.fourcc("AVI ");
+  writer.fourcc("LIST"); writer.u32(192); writer.fourcc("hdrl");
+  writer.fourcc("avih"); writer.u32(56);
+  writer.u32(1000000UL / fps);  // dwMicroSecPerFrame
+  writer.u32(0);                // dwMaxBytesPerSec, patched on close
+  writer.u32(0);                // dwPaddingGranularity
+  writer.u32(kAviKeyFrame);     // AVIF_HASINDEX
+  writer.u32(0);                // dwTotalFrames, patched on close
+  writer.u32(0); writer.u32(1); writer.u32(0);
+  writer.u32(width); writer.u32(height); writer.zeros(16);
+  writer.fourcc("LIST"); writer.u32(116); writer.fourcc("strl");
+  writer.fourcc("strh"); writer.u32(56);
+  writer.fourcc("vids"); writer.fourcc("MJPG"); writer.u32(0);
+  writer.u16(0); writer.u16(0); writer.u32(0);
+  writer.u32(1); writer.u32(fps); writer.u32(0); writer.u32(0);
+  writer.u32(0); writer.u32(UINT32_MAX); writer.u32(0);
+  writer.u16(0); writer.u16(0); writer.u16(width); writer.u16(height);
+  writer.fourcc("strf"); writer.u32(40);
+  writer.u32(40); writer.u32(width); writer.u32(height);
+  writer.u16(1); writer.u16(24); writer.fourcc("MJPG");
+  writer.u32(static_cast<uint32_t>(width) * height * 3UL);
+  writer.u32(0); writer.u32(0); writer.u32(0); writer.u32(0);
+  writer.fourcc("LIST"); writer.u32(4); writer.fourcc("movi");
+  return writer.position() == kAviHeaderSize;
+}
+
+bool writeU32At(File& file, uint32_t offset, uint32_t value) {
+  uint8_t encoded[4] = {static_cast<uint8_t>(value), static_cast<uint8_t>(value >> 8),
+                        static_cast<uint8_t>(value >> 16),
+                        static_cast<uint8_t>(value >> 24)};
+  return file.seek(offset) && file.write(encoded, sizeof(encoded)) == sizeof(encoded);
+}
+
+bool writeFourcc(File& file, const char value[5]) {
+  return file.write(reinterpret_cast<const uint8_t*>(value), 4) == 4;
+}
+
+bool writeU32(File& file, uint32_t value) {
+  uint8_t encoded[4] = {static_cast<uint8_t>(value), static_cast<uint8_t>(value >> 8),
+                        static_cast<uint8_t>(value >> 16),
+                        static_cast<uint8_t>(value >> 24)};
+  return file.write(encoded, sizeof(encoded)) == sizeof(encoded);
+}
 
 QueueHandle_t asQueue(void* value) {
   return static_cast<QueueHandle_t>(value);
@@ -168,10 +295,23 @@ bool StorageService::begin() {
 }
 
 bool StorageService::requestPhotoSave() {
-  if (!mounted_ || queue_ == nullptr) {
+  if (!mounted_ || queue_ == nullptr || videoActive_) {
     return false;
   }
   const Command command = Command::SavePhoto;
+  return xQueueSend(asQueue(queue_), &command, 0) == pdTRUE;
+}
+
+bool StorageService::requestVideoStart() {
+  const RuntimeConfig settings = Settings.snapshot();
+  if (!mounted_ || queue_ == nullptr || !settings.videoEnabled || videoActive_) return false;
+  const Command command = Command::StartVideo;
+  return xQueueSend(asQueue(queue_), &command, 0) == pdTRUE;
+}
+
+bool StorageService::requestVideoStop() {
+  if (!mounted_ || queue_ == nullptr) return false;
+  const Command command = Command::StopVideo;
   return xQueueSend(asQueue(queue_), &command, 0) == pdTRUE;
 }
 
@@ -182,9 +322,31 @@ void StorageService::taskEntry(void* context) {
 void StorageService::taskLoop() {
   Command command;
   for (;;) {
-    if (xQueueReceive(asQueue(queue_), &command, portMAX_DELAY) == pdTRUE &&
-        command == Command::SavePhoto) {
-      savePhoto();
+    const TickType_t wait = videoActive_ ? pdMS_TO_TICKS(10) : portMAX_DELAY;
+    if (xQueueReceive(asQueue(queue_), &command, wait) == pdTRUE) {
+      if (command == Command::SavePhoto) {
+        savePhoto();
+      } else if (command == Command::StartVideo) {
+        startVideo();
+      } else if (command == Command::StopVideo && videoActive_) {
+        finishVideo(true);
+      }
+    }
+
+    if (!videoActive_) continue;
+    auto* video = static_cast<VideoState*>(videoState_);
+    const uint32_t now = millis();
+    if (now - videoStartedAtMs_ >= video->durationMs ||
+        videoFrames_ >= video->indexCapacity) {
+      finishVideo(true);
+    } else if (static_cast<int32_t>(now - video->nextFrameAtMs) >= 0) {
+      const uint32_t interval = 1000U / video->targetFps;
+      video->nextFrameAtMs += interval;
+      if (static_cast<int32_t>(now - video->nextFrameAtMs) >
+          static_cast<int32_t>(interval)) {
+        video->nextFrameAtMs = now + interval;
+      }
+      if (!appendVideoFrame()) finishVideo(false);
     }
   }
 }
@@ -258,6 +420,203 @@ bool StorageService::savePhoto() {
   return success;
 }
 
+bool StorageService::startVideo() {
+  if (videoActive_) return true;
+  const RuntimeConfig settings = Settings.snapshot();
+  if (!mounted_ || !settings.videoEnabled) return false;
+
+  auto* video = new (std::nothrow) VideoState();
+  if (video == nullptr || !frameDimensions(settings.frameSize, video->width, video->height)) {
+    delete video;
+    Serial.println("[video] Cannot allocate recorder state");
+    return false;
+  }
+
+  video->targetFps = min(settings.videoFrameRate, settings.frameRate);
+  video->durationMs = static_cast<uint32_t>(settings.videoDurationSeconds) * 1000UL;
+  video->maximumFileBytes =
+      static_cast<uint32_t>(settings.videoMaximumSizeMb) * 1024UL * 1024UL;
+  video->indexCapacity =
+      static_cast<size_t>(video->targetFps) * settings.videoDurationSeconds;
+  video->index = static_cast<AviIndexEntry*>(heap_caps_calloc(
+      video->indexCapacity, sizeof(AviIndexEntry), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  if (video->index == nullptr) {
+    delete video;
+    Serial.println("[video] Cannot allocate AVI index in PSRAM");
+    return false;
+  }
+
+  char directory[48];
+  if (!buildVideoPaths(directory, sizeof(directory), video->finalPath,
+                       sizeof(video->finalPath), video->temporaryPath,
+                       sizeof(video->temporaryPath))) {
+    heap_caps_free(video->index);
+    delete video;
+    return false;
+  }
+
+  bool success = false;
+  if (xSemaphoreTake(asSemaphore(mutex_), pdMS_TO_TICKS(2000)) == pdTRUE) {
+    const uint64_t freeBytes = SD_MMC.totalBytes() - SD_MMC.usedBytes();
+    const uint64_t reserveBytes =
+        static_cast<uint64_t>(settings.minimumFreeMb) * 1024ULL * 1024ULL;
+    if (freeBytes > reserveBytes + 1024ULL * 1024ULL && ensureDirectory(directory)) {
+      const uint64_t writableBytes = freeBytes - reserveBytes;
+      if (writableBytes < video->maximumFileBytes) {
+        video->maximumFileBytes = static_cast<uint32_t>(writableBytes);
+      }
+      SD_MMC.remove(video->temporaryPath);
+      video->file = SD_MMC.open(video->temporaryPath, FILE_WRITE);
+      uint8_t header[kAviHeaderSize];
+      success = video->file && buildAviHeader(header, video->width, video->height,
+                                              video->targetFps) &&
+                video->file.write(header, sizeof(header)) == sizeof(header);
+    }
+    if (!success && video->file) video->file.close();
+    if (success) {
+      videoState_ = video;
+      videoActive_ = true;
+      videoFrames_ = 0;
+      videoDroppedFrames_ = 0;
+      videoBytes_ = kAviHeaderSize;
+      videoStartedAtMs_ = millis();
+      videoElapsedMs_ = 0;
+      video->nextFrameAtMs = videoStartedAtMs_;
+    }
+    xSemaphoreGive(asSemaphore(mutex_));
+  }
+
+  if (!success) {
+    if (xSemaphoreTake(asSemaphore(mutex_), pdMS_TO_TICKS(1000)) == pdTRUE) {
+      SD_MMC.remove(video->temporaryPath);
+      xSemaphoreGive(asSemaphore(mutex_));
+    }
+    heap_caps_free(video->index);
+    delete video;
+    Serial.println("[video] Cannot create AVI file or insufficient free space");
+    return false;
+  }
+
+  Serial.printf("[video] Recording started: %s (%ux%u at %u FPS)\n", video->finalPath,
+                video->width, video->height, video->targetFps);
+  return true;
+}
+
+bool StorageService::appendVideoFrame() {
+  auto* video = static_cast<VideoState*>(videoState_);
+  if (video == nullptr || videoFrames_ >= video->indexCapacity) return false;
+
+  if (!Camera.copyLatest(video->frame, pdMS_TO_TICKS(250))) {
+    ++videoDroppedFrames_;
+    return true;
+  }
+  if (video->frame.sequence == video->lastSequence) {
+    ++videoDroppedFrames_;
+    return true;
+  }
+
+  const uint32_t paddedLength = (video->frame.length + 1U) & ~1U;
+  const uint32_t projectedSize = kAviHeaderSize + video->movieBytes + 8U + paddedLength +
+                                 8U + (videoFrames_ + 1U) * 16U;
+  if (projectedSize > video->maximumFileBytes) {
+    return finishVideo(true);
+  }
+
+  if (xSemaphoreTake(asSemaphore(mutex_), pdMS_TO_TICKS(500)) != pdTRUE) {
+    ++videoDroppedFrames_;
+    return true;
+  }
+
+  AviIndexEntry& index = video->index[videoFrames_];
+  index.offset = 4U + video->movieBytes;  // Relative to the 'movi' FOURCC.
+  index.size = video->frame.length;
+  bool success = writeFourcc(video->file, "00dc") && writeU32(video->file, index.size) &&
+                 video->file.write(video->frame.data, video->frame.length) ==
+                     video->frame.length;
+  if (success && (video->frame.length & 1U) != 0) {
+    const uint8_t padding = 0;
+    success = video->file.write(&padding, 1) == 1;
+  }
+  xSemaphoreGive(asSemaphore(mutex_));
+
+  if (!success) {
+    video->writeFailed = true;
+    Serial.println("[video] microSD write failed");
+    return false;
+  }
+
+  video->lastSequence = video->frame.sequence;
+  video->movieBytes += 8U + paddedLength;
+  video->jpegBytes += index.size;
+  video->largestFrame = max(video->largestFrame, index.size);
+  ++videoFrames_;
+  videoBytes_ = kAviHeaderSize + video->movieBytes;
+  return true;
+}
+
+bool StorageService::finishVideo(bool keepFile) {
+  auto* video = static_cast<VideoState*>(videoState_);
+  if (video == nullptr) return false;
+
+  bool success = keepFile && !video->writeFailed && videoFrames_ > 0;
+  uint32_t completedSize = videoBytes_;
+  if (xSemaphoreTake(asSemaphore(mutex_), portMAX_DELAY) == pdTRUE) {
+    if (success) {
+      success = writeFourcc(video->file, "idx1") &&
+                writeU32(video->file, videoFrames_ * 16U);
+      for (uint32_t i = 0; success && i < videoFrames_; ++i) {
+        success = writeFourcc(video->file, "00dc") && writeU32(video->file, kAviKeyFrame) &&
+                  writeU32(video->file, video->index[i].offset) &&
+                  writeU32(video->file, video->index[i].size);
+      }
+
+      const uint32_t elapsedMs = max(1UL, millis() - videoStartedAtMs_);
+      const uint32_t effectiveFps =
+          max(1UL, (videoFrames_ * 1000UL + elapsedMs / 2UL) / elapsedMs);
+      const uint32_t finalSize = video->file.position();
+      completedSize = finalSize;
+      success = success && writeU32At(video->file, 4, finalSize - 8U) &&
+                writeU32At(video->file, 32, 1000000UL / effectiveFps) &&
+                writeU32At(video->file, 36, video->largestFrame * effectiveFps) &&
+                writeU32At(video->file, 48, videoFrames_) &&
+                writeU32At(video->file, 60, video->largestFrame) &&
+                writeU32At(video->file, 128, 1) &&
+                writeU32At(video->file, 132, effectiveFps) &&
+                writeU32At(video->file, 140, videoFrames_) &&
+                writeU32At(video->file, 144, video->largestFrame) &&
+                writeU32At(video->file, 216, 4U + video->movieBytes);
+      video->file.flush();
+    }
+    video->file.close();
+
+    if (success) {
+      SD_MMC.remove(video->finalPath);
+      success = SD_MMC.rename(video->temporaryPath, video->finalPath);
+      if (success) strlcpy(latestVideo_, video->finalPath, sizeof(latestVideo_));
+    }
+    if (!success) SD_MMC.remove(video->temporaryPath);
+    xSemaphoreGive(asSemaphore(mutex_));
+  } else {
+    success = false;
+  }
+
+  const uint32_t frames = videoFrames_;
+  const uint32_t elapsedMs = millis() - videoStartedAtMs_;
+  Camera.release(video->frame);
+  heap_caps_free(video->index);
+  delete video;
+  videoState_ = nullptr;
+  videoActive_ = false;
+  videoBytes_ = completedSize;
+  videoElapsedMs_ = elapsedMs;
+  videoStartedAtMs_ = 0;
+
+  Serial.printf("[video] Recording %s: %lu frames, %lu bytes\n",
+                success ? "saved" : "discarded", static_cast<unsigned long>(frames),
+                static_cast<unsigned long>(completedSize));
+  return success;
+}
+
 bool StorageService::buildPhotoPaths(char* directory, size_t directorySize,
                                      char* finalPath, size_t finalPathSize,
                                      char* temporaryPath, size_t temporaryPathSize) {
@@ -275,6 +634,31 @@ bool StorageService::buildPhotoPaths(char* directory, size_t directorySize,
   } else {
     snprintf(directory, directorySize, "%s/unsynced", settings.photoDirectory);
     snprintf(finalPath, finalPathSize, "%s/boot_%010lu_%08lx.jpg", directory,
+             static_cast<unsigned long>(millis()),
+             static_cast<unsigned long>(esp_random()));
+  }
+
+  snprintf(temporaryPath, temporaryPathSize, "%s.tmp", finalPath);
+  return true;
+}
+
+bool StorageService::buildVideoPaths(char* directory, size_t directorySize,
+                                     char* finalPath, size_t finalPathSize,
+                                     char* temporaryPath, size_t temporaryPathSize) {
+  const RuntimeConfig settings = Settings.snapshot();
+  const time_t now = time(nullptr);
+
+  if (now >= static_cast<time_t>(AppConfig::kValidEpochThreshold)) {
+    tm utc = {};
+    gmtime_r(&now, &utc);
+    snprintf(directory, directorySize, "%s/%04d/%02d/%02d", settings.videoDirectory,
+             utc.tm_year + 1900, utc.tm_mon + 1, utc.tm_mday);
+    snprintf(finalPath, finalPathSize, "%s/%04d%02d%02dT%02d%02d%02dZ_%08lx.avi",
+             directory, utc.tm_year + 1900, utc.tm_mon + 1, utc.tm_mday, utc.tm_hour,
+             utc.tm_min, utc.tm_sec, static_cast<unsigned long>(esp_random()));
+  } else {
+    snprintf(directory, directorySize, "%s/unsynced", settings.videoDirectory);
+    snprintf(finalPath, finalPathSize, "%s/boot_%010lu_%08lx.avi", directory,
              static_cast<unsigned long>(millis()),
              static_cast<unsigned long>(esp_random()));
   }
@@ -317,6 +701,12 @@ StorageStatus StorageService::status() {
     result.totalBytes = SD_MMC.totalBytes();
     result.usedBytes = SD_MMC.usedBytes();
     strlcpy(result.latestPhoto, latestPhoto_, sizeof(result.latestPhoto));
+    strlcpy(result.latestVideo, latestVideo_, sizeof(result.latestVideo));
+    result.recording = videoActive_;
+    result.videoFrames = videoFrames_;
+    result.videoDroppedFrames = videoDroppedFrames_;
+    result.videoBytes = videoBytes_;
+    result.videoElapsedMs = videoActive_ ? millis() - videoStartedAtMs_ : videoElapsedMs_;
     xSemaphoreGive(asSemaphore(mutex_));
   }
   return result;
@@ -355,6 +745,49 @@ bool StorageService::streamLatestPhoto(void* opaqueRequest) {
   return success;
 }
 
+bool StorageService::streamLatestVideo(void* opaqueRequest) {
+  auto* request = static_cast<httpd_req_t*>(opaqueRequest);
+  if (!mounted_ || mutex_ == nullptr) {
+    sendServiceUnavailable(request, "microSD unavailable");
+    return false;
+  }
+  if (videoActive_) {
+    httpd_resp_set_status(request, "409 Conflict");
+    httpd_resp_set_type(request, "text/plain");
+    httpd_resp_sendstr(request, "Stop the recording before downloading video files");
+    return false;
+  }
+  if (xSemaphoreTake(asSemaphore(mutex_), pdMS_TO_TICKS(1000)) != pdTRUE) {
+    sendServiceUnavailable(request, "microSD busy");
+    return false;
+  }
+  if (videoActive_) {
+    xSemaphoreGive(asSemaphore(mutex_));
+    httpd_resp_set_status(request, "409 Conflict");
+    httpd_resp_set_type(request, "text/plain");
+    httpd_resp_sendstr(request, "Stop the recording before downloading video files");
+    return false;
+  }
+  if (latestVideo_[0] == '\0') {
+    xSemaphoreGive(asSemaphore(mutex_));
+    httpd_resp_send_err(request, HTTPD_404_NOT_FOUND, "No saved video yet");
+    return false;
+  }
+
+  File file = SD_MMC.open(latestVideo_, FILE_READ);
+  if (!file) {
+    xSemaphoreGive(asSemaphore(mutex_));
+    httpd_resp_send_err(request, HTTPD_500_INTERNAL_SERVER_ERROR, "Cannot read saved video");
+    return false;
+  }
+  httpd_resp_set_type(request, "video/x-msvideo");
+  httpd_resp_set_hdr(request, "Cache-Control", "private, max-age=60");
+  const bool success = sendFile(request, file);
+  file.close();
+  xSemaphoreGive(asSemaphore(mutex_));
+  return success;
+}
+
 bool StorageService::listDirectory(const char* path, void* opaqueRequest) {
   auto* request = static_cast<httpd_req_t*>(opaqueRequest);
   if (!mounted_ || mutex_ == nullptr) {
@@ -365,8 +798,21 @@ bool StorageService::listDirectory(const char* path, void* opaqueRequest) {
     httpd_resp_send_err(request, HTTPD_400_BAD_REQUEST, "Invalid path");
     return false;
   }
+  if (videoActive_) {
+    httpd_resp_set_status(request, "409 Conflict");
+    httpd_resp_set_type(request, "text/plain");
+    httpd_resp_sendstr(request, "Stop the recording before browsing microSD files");
+    return false;
+  }
   if (xSemaphoreTake(asSemaphore(mutex_), pdMS_TO_TICKS(1000)) != pdTRUE) {
     sendServiceUnavailable(request, "microSD busy");
+    return false;
+  }
+  if (videoActive_) {
+    xSemaphoreGive(asSemaphore(mutex_));
+    httpd_resp_set_status(request, "409 Conflict");
+    httpd_resp_set_type(request, "text/plain");
+    httpd_resp_sendstr(request, "Stop the recording before browsing microSD files");
     return false;
   }
 
@@ -391,6 +837,12 @@ bool StorageService::listDirectory(const char* path, void* opaqueRequest) {
   File entry;
   while (success && count < 250 && (entry = directory.openNextFile())) {
     const char* entryPath = entry.path();
+    const size_t pathLength = strlen(entryPath);
+    if (!entry.isDirectory() && pathLength >= 4 &&
+        strcasecmp(entryPath + pathLength - 4, ".tmp") == 0) {
+      entry.close();
+      continue;
+    }
     char savedAt[32];
     const char* dateSource = savedTimestamp(entry, savedAt, sizeof(savedAt));
     char prefix[176];
@@ -429,8 +881,21 @@ bool StorageService::streamFile(const char* path, void* opaqueRequest, bool down
     httpd_resp_send_err(request, HTTPD_400_BAD_REQUEST, "Invalid path");
     return false;
   }
+  if (videoActive_) {
+    httpd_resp_set_status(request, "409 Conflict");
+    httpd_resp_set_type(request, "text/plain");
+    httpd_resp_sendstr(request, "Stop the recording before opening microSD files");
+    return false;
+  }
   if (xSemaphoreTake(asSemaphore(mutex_), pdMS_TO_TICKS(1000)) != pdTRUE) {
     sendServiceUnavailable(request, "microSD busy");
+    return false;
+  }
+  if (videoActive_) {
+    xSemaphoreGive(asSemaphore(mutex_));
+    httpd_resp_set_status(request, "409 Conflict");
+    httpd_resp_set_type(request, "text/plain");
+    httpd_resp_sendstr(request, "Stop the recording before opening microSD files");
     return false;
   }
 

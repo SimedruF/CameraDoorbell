@@ -16,6 +16,7 @@ struct RadarStatus {
   uint32_t lastFrameAgeMs = UINT32_MAX;
   uint32_t eventSequence = 0;
   uint32_t photosTriggered = 0;
+  uint32_t videosTriggered = 0;
 };
 
 class RadarService {

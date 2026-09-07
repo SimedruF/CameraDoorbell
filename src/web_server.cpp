@@ -40,9 +40,12 @@ const char kIndexHtml[] PROGMEM = R"HTML(
   <nav><a href="/">Cameră</a><a href="/files">microSD</a><a href="/config">Configurare</a></nav>
   <img id="stream" alt="Flux MJPEG">
   <div>
-    <button onclick="savePhoto()">Salvează fotografie</button>
+    <button id="photoSave" onclick="savePhoto()">Salvează fotografie</button>
+    <button id="recordStart" onclick="videoCommand('start')">Pornește înregistrarea</button>
+    <button id="recordStop" onclick="videoCommand('stop')">Oprește înregistrarea</button>
     <a href="/capture" target="_blank">Snapshot curent</a>
     <a href="/photos/latest" target="_blank">Ultima fotografie salvată</a>
+    <a href="/videos/latest">Ultimul film AVI</a>
   </div>
   <pre id="status">Se încarcă...</pre>
   <script>
@@ -52,8 +55,13 @@ const char kIndexHtml[] PROGMEM = R"HTML(
       alert(await response.text());
       setTimeout(loadStatus,1000);
     }
+    async function videoCommand(command){
+      const response=await fetch('/api/record/'+command,{method:'POST'});
+      alert(await response.text());
+      setTimeout(loadStatus,500);
+    }
     async function loadStatus(){
-      try{document.getElementById('status').textContent=JSON.stringify(await (await fetch('/api/status')).json(),null,2)}
+      try{const status=await (await fetch('/api/status')).json();document.getElementById('status').textContent=JSON.stringify(status,null,2);document.getElementById('photoSave').disabled=!status.storage.mounted||status.storage.recording;document.getElementById('recordStart').disabled=!status.storage.mounted||!status.storage.video_enabled||status.storage.recording;document.getElementById('recordStop').disabled=!status.storage.recording}
       catch(e){document.getElementById('status').textContent=String(e)}
     }
     loadStatus(); setInterval(loadStatus,5000);
@@ -84,10 +92,12 @@ label{display:block;margin:12px 0 5px}input[type=text],input[type=password],inpu
 <div class="row"><div><label for="photoDir">Director fotografii</label><input id="photoDir" maxlength="31"></div>
 <div><label for="videoDir">Director filme</label><input id="videoDir" maxlength="31"></div></div>
 <label for="minFree">Spațiu liber minim (MB)</label><input id="minFree" type="number" min="0" max="16384">
-<div class="hint">Sub acest prag nu se mai salvează fotografii. Înregistrarea video va folosi directorul de filme într-o etapă ulterioară.</div>
+<label><input id="videoEnabled" type="checkbox"> Activează recorderul AVI/MJPEG</label>
+<div class="grid"><div><label for="videoFrameRate">Cadre/secundă în AVI</label><input id="videoFrameRate" type="number" min="1" max="20"></div><div><label for="videoDuration">Durată maximă (secunde)</label><input id="videoDuration" type="number" min="1" max="600"></div><div><label for="videoMaxSize">Dimensiune maximă (MB)</label><input id="videoMaxSize" type="number" min="8" max="1024"></div></div>
+<div class="hint">AVI conține cadre JPEG individuale. Rata efectivă este limitată de rata camerei și poate scădea la rezoluții mari. Salvarea se oprește înainte de a încălca pragul de spațiu liber sau dimensiunea maximă.</div>
 </fieldset><fieldset><legend>Cameră OV2640</legend>
 <div class="grid"><div><label for="camProfile">Profil</label><select id="camProfile"><option value="0">Manual / zi</option><option value="1">Streaming</option><option value="2">Fotografie</option><option value="3">Noapte</option></select></div>
-<div><label for="frameSize">Rezoluție stream și fotografii</label><select id="frameSize"><option value="1">QQVGA 160×120</option><option value="3">HQVGA 240×176</option><option value="5">QVGA 320×240</option><option value="6">CIF 400×296</option><option value="8">VGA 640×480</option><option value="9">SVGA 800×600</option><option value="10">XGA 1024×768</option><option value="11">HD 1280×720</option><option value="12">SXGA 1280×1024</option><option value="13">UXGA 1600×1200</option></select></div></div>
+<div><label for="frameSize">Rezoluție stream, fotografii și AVI</label><select id="frameSize"><option value="1">QQVGA 160×120</option><option value="3">HQVGA 240×176</option><option value="5">QVGA 320×240</option><option value="6">CIF 400×296</option><option value="8">VGA 640×480</option><option value="9">SVGA 800×600</option><option value="10">XGA 1024×768</option><option value="11">HD 1280×720</option><option value="12">SXGA 1280×1024</option><option value="13">UXGA 1600×1200</option></select></div></div>
 <div class="grid"><div><label for="jpegQuality">Calitate JPEG (4 foarte bună, 63 foarte comprimată)</label><input id="jpegQuality" type="number" min="4" max="63"></div><div><label for="frameRate">Cadre/secundă</label><input id="frameRate" type="number" min="1" max="30"></div></div>
 <div class="grid"><div><label for="brightness">Luminozitate (-2…2)</label><input id="brightness" type="number" min="-2" max="2"></div><div><label for="contrast">Contrast (-2…2)</label><input id="contrast" type="number" min="-2" max="2"></div><div><label for="saturation">Saturație (-2…2)</label><input id="saturation" type="number" min="-2" max="2"></div></div>
 <label for="specialEffect">Efect</label><select id="specialEffect"><option value="0">Normal</option><option value="1">Negativ</option><option value="2">Alb-negru</option><option value="3">Tentă roșie</option><option value="4">Tentă verde</option><option value="5">Tentă albastră</option><option value="6">Sepia</option></select>
@@ -104,13 +114,14 @@ label{display:block;margin:12px 0 5px}input[type=text],input[type=password],inpu
 <label><input id="radarEnabled" type="checkbox"> Activează radarul pe GPIO3 (UART RX, 256000 baud)</label>
 <div class="grid"><div><label for="radarTriggerMode">Declanșare eveniment</label><select id="radarTriggerMode"><option value="0">Orice prezență</option><option value="1">Doar țintă în mișcare</option><option value="2">Doar țintă staționară</option></select></div><div><label for="radarCooldown">Pauză între evenimente (secunde)</label><input id="radarCooldown" type="number" min="1" max="3600"></div></div>
 <label><input id="radarAutoPhoto" type="checkbox"> Salvează automat o fotografie la începutul prezenței</label>
+<label><input id="radarAutoVideo" type="checkbox"> Pornește automat o înregistrare AVI la începutul prezenței</label>
 <div class="hint">Conectare: LD2410C UART_TX → GPIO3, VCC → 5 V, GND comun. Deconectează UART_TX de la GPIO3 în timpul programării; pinul este folosit și de adaptorul USB-UART.</div>
 </fieldset><button type="submit">Salvează și repornește</button></form><div id="message"></div>
 <script>
 const $=id=>document.getElementById(id);
-const boolIds=['sdEnabled','whiteBalance','awbGain','autoExposure','aec2','autoGain','bpc','wpc','rawGamma','lensCorrection','downsize','horizontalMirror','verticalFlip','colorBar','flashEnabled','radarEnabled','radarAutoPhoto'];
-const cameraIds=['camProfile','frameSize','jpegQuality','frameRate','brightness','contrast','saturation','specialEffect','wbMode','exposureLevel','exposureValue','gainValue','gainCeiling','flashIntensity','radarTriggerMode','radarCooldown'];
-const apiNames={camProfile:'camera_profile',frameSize:'frame_size',jpegQuality:'jpeg_quality',frameRate:'frame_rate',specialEffect:'special_effect',whiteBalance:'white_balance',awbGain:'awb_gain',wbMode:'wb_mode',autoExposure:'auto_exposure',exposureLevel:'exposure_level',exposureValue:'exposure_value',autoGain:'auto_gain',gainValue:'gain_value',gainCeiling:'gain_ceiling',rawGamma:'raw_gamma',lensCorrection:'lens_correction',horizontalMirror:'horizontal_mirror',verticalFlip:'vertical_flip',flashEnabled:'flash_enabled',flashIntensity:'flash_intensity',radarEnabled:'radar_enabled',radarAutoPhoto:'radar_auto_photo',radarTriggerMode:'radar_trigger_mode',radarCooldown:'radar_cooldown_seconds'};
+const boolIds=['sdEnabled','videoEnabled','whiteBalance','awbGain','autoExposure','aec2','autoGain','bpc','wpc','rawGamma','lensCorrection','downsize','horizontalMirror','verticalFlip','colorBar','flashEnabled','radarEnabled','radarAutoPhoto','radarAutoVideo'];
+const cameraIds=['videoFrameRate','videoDuration','videoMaxSize','camProfile','frameSize','jpegQuality','frameRate','brightness','contrast','saturation','specialEffect','wbMode','exposureLevel','exposureValue','gainValue','gainCeiling','flashIntensity','radarTriggerMode','radarCooldown'];
+const apiNames={sdEnabled:'storage_enabled',videoEnabled:'video_enabled',videoFrameRate:'video_fps',videoDuration:'video_duration_seconds',videoMaxSize:'video_maximum_size_mb',camProfile:'camera_profile',frameSize:'frame_size',jpegQuality:'jpeg_quality',frameRate:'frame_rate',specialEffect:'special_effect',whiteBalance:'white_balance',awbGain:'awb_gain',wbMode:'wb_mode',autoExposure:'auto_exposure',exposureLevel:'exposure_level',exposureValue:'exposure_value',autoGain:'auto_gain',gainValue:'gain_value',gainCeiling:'gain_ceiling',rawGamma:'raw_gamma',lensCorrection:'lens_correction',horizontalMirror:'horizontal_mirror',verticalFlip:'vertical_flip',flashEnabled:'flash_enabled',flashIntensity:'flash_intensity',radarEnabled:'radar_enabled',radarAutoPhoto:'radar_auto_photo',radarAutoVideo:'radar_auto_video',radarTriggerMode:'radar_trigger_mode',radarCooldown:'radar_cooldown_seconds'};
 async function load(){try{const c=await (await fetch('/api/config')).json();$('ssid').value=c.wifi_ssid;$('wifiPass').placeholder=c.wifi_password_set?'Parolă salvată; lasă gol pentru a o păstra':'Introduce parola';$('apPass').placeholder=c.ap_password_set?'Parolă salvată; lasă gol pentru a o păstra':'Minimum 8 caractere';$('photoDir').value=c.photo_directory;$('videoDir').value=c.video_directory;$('minFree').value=c.minimum_free_mb;for(const id of boolIds)$(id).checked=c[apiNames[id]||id.replace(/[A-Z]/g,m=>'_'+m.toLowerCase())];for(const id of cameraIds)$(id).value=c[apiNames[id]||id]}catch(e){$('message').textContent='Eroare: '+e}}
 $('camProfile').onchange=()=>{const p=+$('camProfile').value;if(p===1){$('frameSize').value=8;$('jpegQuality').value=12;$('frameRate').value=10;$('brightness').value=0;$('contrast').value=0;$('saturation').value=0}else if(p===2){$('frameSize').value=13;$('jpegQuality').value=8;$('frameRate').value=2;$('brightness').value=0;$('contrast').value=0;$('saturation').value=0}else if(p===3){$('frameSize').value=8;$('jpegQuality').value=14;$('frameRate').value=5;$('brightness').value=1;$('contrast').value=1;$('saturation').value=-1;$('autoExposure').checked=true;$('aec2').checked=true;$('exposureLevel').value=1;$('autoGain').checked=true;$('gainCeiling').value=6}};
 $('settings').addEventListener('submit',async e=>{e.preventDefault();const p=new URLSearchParams();p.set('wifi_ssid',$('ssid').value);p.set('wifi_password',$('wifiPass').value);p.set('clear_wifi',$('clearWifi').checked?'1':'0');p.set('ap_password',$('apPass').value);p.set('photo_directory',$('photoDir').value);p.set('video_directory',$('videoDir').value);p.set('minimum_free_mb',$('minFree').value);for(const id of boolIds)p.set(apiNames[id]||id.replace(/[A-Z]/g,m=>'_'+m.toLowerCase()),$(id).checked?'1':'0');for(const id of cameraIds)p.set(apiNames[id]||id,$(id).value);$('message').textContent='Se salvează...';try{const r=await fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:p});const j=await r.json();if(!r.ok)throw new Error(j.error||r.statusText);$('message').textContent='Setările au fost salvate. Placa repornește; reconectează-te la noua rețea.'}catch(e){$('message').textContent='Eroare: '+e.message}});
@@ -259,6 +270,12 @@ esp_err_t configGetHandler(httpd_req_t* request) {
   json += jsonQuoted(config.videoDirectory);
   json += ",\"minimum_free_mb\":";
   json += config.minimumFreeMb;
+  json += ",\"video_enabled\":"; json += config.videoEnabled ? "true" : "false";
+  json += ",\"video_fps\":"; json += static_cast<unsigned>(config.videoFrameRate);
+  json += ",\"video_duration_seconds\":";
+  json += static_cast<unsigned>(config.videoDurationSeconds);
+  json += ",\"video_maximum_size_mb\":";
+  json += static_cast<unsigned>(config.videoMaximumSizeMb);
   json += ",\"camera_profile\":"; json += static_cast<unsigned>(config.cameraProfile);
   json += ",\"frame_size\":"; json += static_cast<unsigned>(config.frameSize);
   json += ",\"jpeg_quality\":"; json += static_cast<unsigned>(config.jpegQuality);
@@ -289,6 +306,7 @@ esp_err_t configGetHandler(httpd_req_t* request) {
   json += ",\"flash_intensity\":"; json += static_cast<unsigned>(config.flashIntensity);
   json += ",\"radar_enabled\":"; json += config.radarEnabled ? "true" : "false";
   json += ",\"radar_auto_photo\":"; json += config.radarAutoPhoto ? "true" : "false";
+  json += ",\"radar_auto_video\":"; json += config.radarAutoVideo ? "true" : "false";
   json += ",\"radar_trigger_mode\":"; json += static_cast<unsigned>(config.radarTriggerMode);
   json += ",\"radar_cooldown_seconds\":";
   json += static_cast<unsigned>(config.radarCooldownSeconds);
@@ -377,6 +395,12 @@ esp_err_t configPostHandler(httpd_req_t* request) {
       formInteger(body, "frame_size", 1, 13, candidate.frameSize) &&
       formInteger(body, "jpeg_quality", 4, 63, candidate.jpegQuality) &&
       formInteger(body, "frame_rate", 1, 30, candidate.frameRate) &&
+      formBoolean(body, "video_enabled", candidate.videoEnabled) &&
+      formInteger(body, "video_fps", 1, 20, candidate.videoFrameRate) &&
+      formInteger(body, "video_duration_seconds", 1, 600,
+                  candidate.videoDurationSeconds) &&
+      formInteger(body, "video_maximum_size_mb", 8, 1024,
+                  candidate.videoMaximumSizeMb) &&
       formInteger(body, "brightness", -2, 2, candidate.brightness) &&
       formInteger(body, "contrast", -2, 2, candidate.contrast) &&
       formInteger(body, "saturation", -2, 2, candidate.saturation) &&
@@ -403,6 +427,7 @@ esp_err_t configPostHandler(httpd_req_t* request) {
       formInteger(body, "flash_intensity", 0, 255, candidate.flashIntensity) &&
       formBoolean(body, "radar_enabled", candidate.radarEnabled) &&
       formBoolean(body, "radar_auto_photo", candidate.radarAutoPhoto) &&
+      formBoolean(body, "radar_auto_video", candidate.radarAutoVideo) &&
       formInteger(body, "radar_trigger_mode", 0, 2, candidate.radarTriggerMode) &&
       formInteger(body, "radar_cooldown_seconds", 1, 3600,
                   candidate.radarCooldownSeconds);
@@ -480,31 +505,64 @@ esp_err_t latestPhotoHandler(httpd_req_t* request) {
   return Storage.streamLatestPhoto(request) ? ESP_OK : ESP_FAIL;
 }
 
+esp_err_t startVideoHandler(httpd_req_t* request) {
+  if (!Storage.requestVideoStart()) {
+    return sendServiceUnavailable(request,
+                                  "Recorder indisponibil, deja activ sau coada este plina.");
+  }
+  httpd_resp_set_status(request, "202 Accepted");
+  httpd_resp_set_type(request, "text/plain; charset=utf-8");
+  return httpd_resp_sendstr(request, "Pornirea recorderului a fost pusă în coadă.");
+}
+
+esp_err_t stopVideoHandler(httpd_req_t* request) {
+  if (!Storage.requestVideoStop()) {
+    return sendServiceUnavailable(request, "Recorder indisponibil sau coada este plina.");
+  }
+  httpd_resp_set_status(request, "202 Accepted");
+  httpd_resp_set_type(request, "text/plain; charset=utf-8");
+  return httpd_resp_sendstr(request, "Oprirea recorderului a fost pusă în coadă.");
+}
+
+esp_err_t latestVideoHandler(httpd_req_t* request) {
+  return Storage.streamLatestVideo(request) ? ESP_OK : ESP_FAIL;
+}
+
 esp_err_t statusHandler(httpd_req_t* request) {
   const StorageStatus storage = Storage.status();
   const RadarStatus radar = Radar.status();
   const RuntimeConfig settings = Settings.snapshot();
   const IPAddress ip = WiFi.getMode() == WIFI_MODE_AP ? WiFi.softAPIP() : WiFi.localIP();
   const uint32_t age = Camera.latestFrameAgeMs();
-  char json[1024];
+  char json[1536];
   snprintf(json, sizeof(json),
            "{\"camera\":{\"ready\":%s,\"sequence\":%lu,\"frame_age_ms\":%lu},"
            "\"storage\":{\"mounted\":%s,\"total_bytes\":%llu,\"used_bytes\":%llu,"
-           "\"latest_photo\":\"%s\",\"enabled\":%s,\"minimum_free_mb\":%lu},"
+           "\"latest_photo\":\"%s\",\"latest_video\":\"%s\",\"enabled\":%s,"
+           "\"minimum_free_mb\":%lu,\"video_enabled\":%s,\"recording\":%s,"
+           "\"video_frames\":%lu,\"video_dropped_frames\":%lu,"
+           "\"video_bytes\":%lu,\"video_elapsed_ms\":%lu},"
            "\"radar\":{\"enabled\":%s,\"connected\":%s,\"presence\":%s,"
            "\"moving\":%s,\"stationary\":%s,\"moving_distance_cm\":%u,"
            "\"moving_energy\":%u,\"stationary_distance_cm\":%u,"
            "\"stationary_energy\":%u,\"detection_distance_cm\":%u,"
            "\"last_frame_age_ms\":%lu,\"event_sequence\":%lu,"
-           "\"photos_triggered\":%lu},"
+           "\"photos_triggered\":%lu,\"videos_triggered\":%lu},"
            "\"network\":{\"mode\":\"%s\",\"ip\":\"%s\"},"
            "\"memory\":{\"free_heap\":%u,\"free_psram\":%u}}",
            Camera.ready() ? "true" : "false", static_cast<unsigned long>(Camera.latestSequence()),
            static_cast<unsigned long>(age), storage.mounted ? "true" : "false",
            static_cast<unsigned long long>(storage.totalBytes),
            static_cast<unsigned long long>(storage.usedBytes), storage.latestPhoto,
+           storage.latestVideo,
            settings.storageEnabled ? "true" : "false",
            static_cast<unsigned long>(settings.minimumFreeMb),
+           settings.videoEnabled ? "true" : "false",
+           storage.recording ? "true" : "false",
+           static_cast<unsigned long>(storage.videoFrames),
+           static_cast<unsigned long>(storage.videoDroppedFrames),
+           static_cast<unsigned long>(storage.videoBytes),
+           static_cast<unsigned long>(storage.videoElapsedMs),
            radar.enabled ? "true" : "false", radar.connected ? "true" : "false",
            radar.presence ? "true" : "false", radar.moving ? "true" : "false",
            radar.stationary ? "true" : "false",
@@ -516,6 +574,7 @@ esp_err_t statusHandler(httpd_req_t* request) {
            static_cast<unsigned long>(radar.lastFrameAgeMs),
            static_cast<unsigned long>(radar.eventSequence),
            static_cast<unsigned long>(radar.photosTriggered),
+           static_cast<unsigned long>(radar.videosTriggered),
            WiFi.getMode() == WIFI_MODE_AP ? "ap" : "station", ip.toString().c_str(),
            ESP.getFreeHeap(), ESP.getFreePsram());
   httpd_resp_set_type(request, "application/json");
@@ -592,6 +651,9 @@ bool startWebServers() {
   success &= registerUri(webServer, "/api/capture", HTTP_POST, savePhotoHandler);
   success &= registerUri(webServer, "/api/status", HTTP_GET, statusHandler);
   success &= registerUri(webServer, "/photos/latest", HTTP_GET, latestPhotoHandler);
+  success &= registerUri(webServer, "/videos/latest", HTTP_GET, latestVideoHandler);
+  success &= registerUri(webServer, "/api/record/start", HTTP_POST, startVideoHandler);
+  success &= registerUri(webServer, "/api/record/stop", HTTP_POST, stopVideoHandler);
   success &= registerUri(webServer, "/config", HTTP_GET, configPageHandler);
   success &= registerUri(webServer, "/api/config", HTTP_GET, configGetHandler);
   success &= registerUri(webServer, "/api/config", HTTP_POST, configPostHandler);

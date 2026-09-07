@@ -8,11 +8,13 @@ The current implementation provides:
 - JPEG snapshots over HTTP;
 - a microSD card operating in 1-bit SDMMC mode;
 - asynchronous photo storage on the microSD card;
+- asynchronous MJPEG-in-AVI recording on the microSD card;
 - UTC filenames after NTP synchronization and fallback filenames before synchronization;
 - a web interface and status endpoint;
 - persistent Wi-Fi and microSD configuration stored in NVS;
 - a read-only web browser for directories, photos, and videos on the microSD card;
-- optional HLK-LD2410C integration over UART, with automatic photos on presence events;
+- optional HLK-LD2410C integration over UART, with automatic photos and AVI recordings
+  on presence events;
 - GPIO13 reserved for direct control of the RF433 transmitter.
 
 The historical sketches and supporting material in `old_src/` are retained for reference.
@@ -55,9 +57,31 @@ and sensitivities over Bluetooth with HLKRadarTool.
 
 The radar task runs on core 0, reads the stream at 256000 baud, and publishes the
 connection state, presence state, moving/stationary targets, distances, and energy values
-through `/api/status`. On a rising presence event, it can automatically enqueue a photo
-for the storage task. The trigger target type and cooldown period are selectable from
-`/config`.
+through `/api/status`. On a rising presence event, it can automatically enqueue a photo,
+start an AVI recording, or do both. The trigger target type and cooldown period are
+selectable from `/config`.
+
+## AVI/MJPEG recorder
+
+The recorder runs inside the storage task and copies frames from the camera service. It
+does not access the OV2640 driver directly, so the web stream, snapshots, photos, and
+recording all share the same latest JPEG frame safely. A recording can be started and
+stopped from the main web page or started automatically by an HLK-LD2410C presence event.
+
+The output is a standard AVI file with an MJPEG video stream, `00dc` frame chunks, and an
+`idx1` seek index. It contains video only; there is no audio track. While recording, data
+is written to an `.avi.tmp` file. The frame count, timing, RIFF sizes, and seek index are
+finalized before the file is atomically renamed to `.avi`, so a failed or empty recording
+is not exposed as a completed video.
+
+The configurable recorder limits are 1–20 FPS, 1–600 seconds, and 8–1024 MB. The actual
+recording rate is capped by the configured camera rate and may be lower at large frame
+sizes. Recording also stops before consuming the configured minimum free-space reserve.
+Browsing, downloading, or previewing card files is temporarily rejected while recording
+to avoid starving SDMMC writes. New photo-save requests are also rejected during that
+interval, although snapshots and the live stream remain available. Many browsers cannot
+play MJPEG-in-AVI inline; download the file and use VLC or `ffplay` when the browser
+preview does not start.
 
 ## Configuration
 
@@ -76,7 +100,8 @@ The configuration page also provides:
 
 - microSD enable/disable control;
 - configurable photo and video directories;
-- a minimum free-space threshold below which photos are no longer stored;
+- a minimum free-space threshold protected by photo and video storage;
+- AVI/MJPEG enable, frame rate, duration, and maximum file-size controls;
 - Manual/day, Streaming, Photo, and Night profiles;
 - resolutions from QQVGA to UXGA, JPEG quality, and 1–30 FPS;
 - OV2640 brightness, contrast, saturation, and effects;
@@ -108,8 +133,11 @@ reset and upload. After the upload, disconnect GPIO0 from GND and reset the boar
 | GET | `/` | Web interface |
 | GET | `/capture` | Current JPEG without saving it |
 | POST | `/api/capture` | Enqueue a photo for storage |
+| POST | `/api/record/start` | Start an AVI/MJPEG recording asynchronously |
+| POST | `/api/record/stop` | Stop and finalize the active recording asynchronously |
 | GET | `/api/status` | JSON status for camera, radar, storage, network, and memory |
 | GET | `/photos/latest` | Most recently saved photo |
+| GET | `/videos/latest` | Most recently completed AVI recording |
 | GET | `/config` | Wi-Fi, storage, camera, and radar configuration page |
 | GET/POST | `/api/config` | Read/save configuration; passwords are never returned |
 | GET | `/files` | microSD content browser |
@@ -120,4 +148,11 @@ reset and upload. After the upload, disconnect GPIO0 from GND and reset the boar
 
 By default, photos are stored under `/photos/YYYY/MM/DD/`. Until NTP synchronization,
 they are stored under `/photos/unsynced/`. The root directory can be changed from the
-configuration page.
+configuration page. Videos follow the same layout under `/videos/YYYY/MM/DD/` and
+`/videos/unsynced/`.
+
+After downloading a recording, its container and stream can be inspected on a computer:
+
+```bash
+ffprobe -hide_banner recording.avi
+```

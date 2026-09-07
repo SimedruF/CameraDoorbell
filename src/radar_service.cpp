@@ -85,11 +85,22 @@ void RadarService::taskLoop() {
     const bool trigger = triggerIsActive(config, presence, moving, stationary);
 
     bool photoQueued = false;
+    bool videoQueued = false;
     if (trigger && !previousTrigger && config.radarAutoPhoto &&
         (lastTriggerAt == 0 || now - lastTriggerAt >= config.radarCooldownSeconds * 1000UL)) {
       photoQueued = Storage.requestPhotoSave();
+      if (config.radarAutoVideo) videoQueued = Storage.requestVideoStart();
       lastTriggerAt = now;
-      Serial.printf("[radar] Presence event; photo %s\n", photoQueued ? "queued" : "not queued");
+      Serial.printf("[radar] Presence event; photo %s, video %s\n",
+                    photoQueued ? "queued" : "not queued",
+                    videoQueued ? "queued" : "not queued");
+    } else if (trigger && !previousTrigger && config.radarAutoVideo &&
+               (lastTriggerAt == 0 ||
+                now - lastTriggerAt >= config.radarCooldownSeconds * 1000UL)) {
+      videoQueued = Storage.requestVideoStart();
+      lastTriggerAt = now;
+      Serial.printf("[radar] Presence event; video %s\n",
+                    videoQueued ? "queued" : "not queued");
     }
 
     if (xSemaphoreTake(asSemaphore(mutex_), pdMS_TO_TICKS(20)) == pdTRUE) {
@@ -107,6 +118,7 @@ void RadarService::taskLoop() {
       status_.lastFrameAgeMs = lastFrameAt == 0 ? UINT32_MAX : now - lastFrameAt;
       if (risingEdge) ++status_.eventSequence;
       if (photoQueued) ++status_.photosTriggered;
+      if (videoQueued) ++status_.videosTriggered;
       xSemaphoreGive(asSemaphore(mutex_));
     }
 
