@@ -115,6 +115,12 @@ restarts the board. The microSD browser displays the saved date from FAT metadat
 infers it from filenames created by the firmware. It is intentionally read-only at this
 stage and supports file previews and downloads.
 
+The camera capture task uses an 8192-byte stack and reports its minimum remaining stack
+every 30 seconds. After five consecutive frame acquisition failures, it deinitializes,
+power-cycles, and retries the OV2640 locally instead of rebooting the complete device.
+`/api/status` exposes `capture_failures`, `recoveries`, and `stack_high_watermark` for
+diagnostics.
+
 ## Build and upload
 
 ```bash

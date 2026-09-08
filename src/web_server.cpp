@@ -493,8 +493,18 @@ esp_err_t snapshotHandler(httpd_req_t* request) {
 }
 
 esp_err_t savePhotoHandler(httpd_req_t* request) {
+  const StorageStatus storage = Storage.status();
+  if (!storage.mounted) {
+    return sendServiceUnavailable(request, "microSD este dezactivat sau nu a fost montat.");
+  }
+  if (storage.recording) {
+    httpd_resp_set_status(request, "409 Conflict");
+    httpd_resp_set_type(request, "text/plain; charset=utf-8");
+    return httpd_resp_sendstr(
+        request, "Salvarea fotografiilor este suspendată în timpul înregistrării AVI.");
+  }
   if (!Storage.requestPhotoSave()) {
-    return sendServiceUnavailable(request, "microSD unavailable or capture queue full");
+    return sendServiceUnavailable(request, "Coada de salvare a fotografiilor este plină.");
   }
   httpd_resp_set_status(request, "202 Accepted");
   httpd_resp_set_type(request, "text/plain; charset=utf-8");
@@ -536,7 +546,9 @@ esp_err_t statusHandler(httpd_req_t* request) {
   const uint32_t age = Camera.latestFrameAgeMs();
   char json[1536];
   snprintf(json, sizeof(json),
-           "{\"camera\":{\"ready\":%s,\"sequence\":%lu,\"frame_age_ms\":%lu},"
+           "{\"camera\":{\"ready\":%s,\"sequence\":%lu,\"frame_age_ms\":%lu,"
+           "\"capture_failures\":%lu,\"recoveries\":%lu,"
+           "\"stack_high_watermark\":%lu},"
            "\"storage\":{\"mounted\":%s,\"total_bytes\":%llu,\"used_bytes\":%llu,"
            "\"latest_photo\":\"%s\",\"latest_video\":\"%s\",\"enabled\":%s,"
            "\"minimum_free_mb\":%lu,\"video_enabled\":%s,\"recording\":%s,"
@@ -551,7 +563,11 @@ esp_err_t statusHandler(httpd_req_t* request) {
            "\"network\":{\"mode\":\"%s\",\"ip\":\"%s\"},"
            "\"memory\":{\"free_heap\":%u,\"free_psram\":%u}}",
            Camera.ready() ? "true" : "false", static_cast<unsigned long>(Camera.latestSequence()),
-           static_cast<unsigned long>(age), storage.mounted ? "true" : "false",
+           static_cast<unsigned long>(age),
+           static_cast<unsigned long>(Camera.captureFailures()),
+           static_cast<unsigned long>(Camera.recoveries()),
+           static_cast<unsigned long>(Camera.stackHighWatermark()),
+           storage.mounted ? "true" : "false",
            static_cast<unsigned long long>(storage.totalBytes),
            static_cast<unsigned long long>(storage.usedBytes), storage.latestPhoto,
            storage.latestVideo,

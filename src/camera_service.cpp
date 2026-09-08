@@ -11,6 +11,10 @@ CameraService Camera;
 
 namespace {
 
+constexpr uint32_t kCameraTaskStackBytes = 8192;
+constexpr uint8_t kFailuresBeforeRecovery = 5;
+constexpr uint32_t kDriverRetryDelayMs = 2000;
+
 uint8_t* resizePsramBuffer(uint8_t* current, size_t required) {
   uint8_t* resized = static_cast<uint8_t*>(
       heap_caps_realloc(current, required, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
@@ -34,7 +38,34 @@ bool CameraService::begin() {
     return false;
   }
 
+  driverReady_ = initializeDriver();
+
+  const BaseType_t created = xTaskCreatePinnedToCore(
+      taskEntry, "camera_capture", kCameraTaskStackBytes, this, 4, nullptr, 1);
+  if (created != pdPASS) {
+    Serial.println("[camera] Cannot create capture task");
+    if (driverReady_) esp_camera_deinit();
+    driverReady_ = false;
+    return false;
+  }
+
+  if (!driverReady_) {
+    Serial.println("[camera] Driver unavailable; background recovery enabled");
+  }
+  return true;
+}
+
+bool CameraService::initializeDriver() {
   const RuntimeConfig settings = Settings.snapshot();
+
+  // A software reset does not remove power from the OV2640. Pulse PWDN so a
+  // camera left in an invalid state by a panic starts from a known state.
+  pinMode(BoardPins::kCameraPwdn, OUTPUT);
+  digitalWrite(BoardPins::kCameraPwdn, HIGH);
+  delay(30);
+  digitalWrite(BoardPins::kCameraPwdn, LOW);
+  delay(30);
+
   camera_config_t config = {};
   config.ledc_channel = LEDC_CHANNEL_0;
   config.ledc_timer = LEDC_TIMER_0;
@@ -65,6 +96,7 @@ bool CameraService::begin() {
   const esp_err_t error = esp_camera_init(&config);
   if (error != ESP_OK) {
     Serial.printf("[camera] Initialization failed: 0x%x\n", error);
+    driverReady_ = false;
     return false;
   }
 
@@ -96,14 +128,7 @@ bool CameraService::begin() {
     sensor->set_colorbar(sensor, settings.colorBar);
   }
 
-  const BaseType_t created =
-      xTaskCreatePinnedToCore(taskEntry, "camera_capture", 4096, this, 4, nullptr, 1);
-  if (created != pdPASS) {
-    Serial.println("[camera] Cannot create capture task");
-    esp_camera_deinit();
-    return false;
-  }
-
+  driverReady_ = true;
   Serial.printf("[camera] OV2640 ready (JPEG, frame size=%u, quality=%u, %u FPS)\n",
                 settings.frameSize, settings.jpegQuality, settings.frameRate);
   return true;
@@ -118,14 +143,46 @@ void CameraService::captureLoop() {
   const TickType_t frameInterval = pdMS_TO_TICKS(1000U / settings.frameRate);
   TickType_t lastWake = xTaskGetTickCount();
   uint8_t warmupFrames = 3;
+  uint8_t consecutiveFailures = 0;
+  bool recovering = false;
+  uint32_t lastStackReportAt = millis();
 
   for (;;) {
+    if (!driverReady_) {
+      ready_ = false;
+      if (initializeDriver()) {
+        if (recovering) ++recoveries_;
+        recovering = false;
+        consecutiveFailures = 0;
+        warmupFrames = 3;
+        lastWake = xTaskGetTickCount();
+      } else {
+        recovering = true;
+        vTaskDelay(pdMS_TO_TICKS(kDriverRetryDelayMs));
+      }
+      continue;
+    }
+
     camera_fb_t* frame = esp_camera_fb_get();
     if (frame == nullptr) {
-      Serial.println("[camera] Capture failed");
+      ++captureFailures_;
+      ++consecutiveFailures;
+      Serial.printf("[camera] Capture failed (%u/%u)\n", consecutiveFailures,
+                    kFailuresBeforeRecovery);
+      if (consecutiveFailures >= kFailuresBeforeRecovery) {
+        ready_ = false;
+        Serial.println("[camera] Reinitializing OV2640 after repeated capture failures");
+        esp_camera_deinit();
+        driverReady_ = false;
+        recovering = true;
+        consecutiveFailures = 0;
+      }
+      lastWake = xTaskGetTickCount();
       vTaskDelay(pdMS_TO_TICKS(250));
       continue;
     }
+
+    consecutiveFailures = 0;
 
     if (frame->format == PIXFORMAT_JPEG && warmupFrames == 0) {
       if (!publish(frame->buf, frame->len)) {
@@ -136,6 +193,13 @@ void CameraService::captureLoop() {
     }
 
     esp_camera_fb_return(frame);
+
+    if (millis() - lastStackReportAt >= 30000) {
+      lastStackReportAt = millis();
+      stackHighWatermark_ = uxTaskGetStackHighWaterMark(nullptr);
+      Serial.printf("[camera] minimum free stack=%lu bytes\n",
+                    static_cast<unsigned long>(stackHighWatermark_));
+    }
     vTaskDelayUntil(&lastWake, frameInterval);
   }
 }
